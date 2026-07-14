@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-slate-50 text-slate-900;
+}
+
+/* react-big-calendar: reskin para que combine con el resto de la app */
+.rbc-calendar {
+  font-family: inherit;
+}
+.rbc-toolbar button {
+  @apply rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-600;
+}
+.rbc-toolbar button:hover {
+  @apply bg-slate-50;
+}
+.rbc-toolbar button.rbc-active,
+.rbc-toolbar button.rbc-active:hover {
+  @apply border-brand-600 bg-brand-600 text-white;
+}
+.rbc-toolbar-label {
+  @apply text-sm font-semibold text-slate-900;
+}
+.rbc-today {
+  background-color: theme("colors.brand.50");
+}
+.rbc-event {
+  @apply text-xs;
+}
+.rbc-off-range-bg {
+  background-color: theme("colors.slate.50");
+}
