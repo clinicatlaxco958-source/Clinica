@@ -2,152 +2,140 @@
 
 Bitácora de avance del proyecto. Actualizar al final de cada sesión de
 trabajo para que cualquier agente (o Tony) pueda retomar sin releer todo
-el código.
+el código ni la conversación completa.
 
-## Estado actual (2026-07-11)
+## Estado actual (2026-07-16)
 
-- Código fuente descomprimido desde `clinicsaas.zip` a esta carpeta
-  (`Documents/Personal/clinica`).
-- `npm install` corrido con éxito (117 paquetes).
-- `CLAUDE.md` y `NEGOCIO.md` creados con la arquitectura y el modelo de
-  negocio del proyecto.
-- Proyecto de Supabase creado (piloto). `supabase/schema.sql` ejecutado
-  sin errores.
-- `.env.local` creado con `NEXT_PUBLIC_SUPABASE_URL` y
-  `NEXT_PUBLIC_SUPABASE_ANON_KEY` reales (archivo ignorado por git).
-- Clínica piloto **"Clínica Tlaxco"** (tipo `medica`, tel. 2411842276)
-  creada en la tabla `clinics`.
-- Usuario admin **Jose Antonio Blancas** creado en Supabase Auth
-  (uuid `45387892-1fc5-4a0b-ae26-70d5ddc88ba9`) y vinculado en la tabla
-  `users` con `role = 'admin'` a la clínica anterior.
+**Piloto en producción real** con la clínica **"Clínica Tlaxco"** (tipo
+`medica`). Repo en GitHub: `https://github.com/clinicatlaxco958-source/Clinica.git`.
+Usuario admin: Jose Antonio Blancas.
 
-**Desde entonces (ver historial abajo) ya se construyó:** gestión de
-usuarios (`/dashboard/usuarios`, admin-only), cambio de contraseña
-obligatorio en primer login, un shell nuevo con header superior + menú
-de perfil, un calendario real (día/semana/mes) en la agenda, y el
-formulario de "+ Nueva cita" (con alta rápida de paciente). Detalle
-completo en el historial de sesiones.
+### Implementado y funcionando
 
-## Próximos pasos inmediatos
+- **Auth y permisos**: login, logout, sesión protegida por middleware.
+  "Admin" es un permiso (`is_admin`) independiente de la función clínica
+  (`role`: doctor/receptionist/null) — una persona puede ser ambas cosas.
+  Un doctor no-admin solo ve/gestiona **sus propias** citas, consultas y
+  recetas (RLS, no solo UI); admin y recepción ven todo. Ver
+  `CLAUDE.md` sección Architecture para el detalle de las políticas.
+- **Gestión de usuarios** (`/dashboard/usuarios`, admin-only): crear
+  (contraseña temporal mostrada una vez, fuerza cambio en primer login),
+  suspender/reactivar, eliminar, resetear contraseña. Columna de correo
+  visible (leído de `auth.users` vía cliente admin).
+- **Perfil** (`/dashboard/perfil`): datos de solo lectura + si eres
+  doctor, edita tu especialidad/duración de consulta/jornada
+  (inicio-fin de horario).
+- **Agenda/calendario** (`/dashboard/citas`): día (default)/semana/mes
+  con `react-big-calendar`, cuadrícula alineada a la duración y jornada
+  del doctor filtrado. Filtro de doctor oculto para doctores no-admin
+  (solo ven "Mi agenda"). Loading states en toda la navegación del
+  dashboard.
+- **Crear cita** (clic en hueco vacío del calendario, no hay botón
+  aparte): un solo formulario de paciente (buscador en vivo sin acentos
+  vía popover al enfocar nombre/apellido, alta de paciente nueva sin
+  botón "guardar" aparte — se resuelve/confirma al dar clic en "Crear
+  cita"), selector de hora limitado a los horarios válidos del doctor
+  (marca "(ocupado)" los ya tomados en vez de ocultarlos, con aviso de
+  "¿agendar de todos modos?" si eliges uno ocupado).
+- **Detalle de cita**: cambiar estado con un clic en el badge (menú de
+  4 opciones); reasignar doctor (solo admin/recepción, útil para
+  cubrir a un doctor ausente); botón final **"Iniciar consulta"** (si la
+  cita es tuya) o **"Capturar signos vitales"** (si no) — cambia a
+  "Modificar signos vitales" si ya se capturaron.
+- **Consulta** (`/dashboard/citas/[id]/consulta`): signos vitales (peso,
+  talla, temperatura, presión) editables por cualquiera con acceso a la
+  cita; notas de consulta y **Tratamiento** (medicamentos dinámicos con
+  presentación — tableta/cápsula/jarabe/gotas/inyección/crema/otro —,
+  cantidad, frecuencia y días) solo si eres el doctor de la cita. Vista
+  previa de receta en vivo al lado derecho.
+- **Pacientes** (`/dashboard/pacientes`): lista + buscador sin acentos;
+  clic en un nombre abre su historial de consultas (modal compartido
+  `PatientHistoryModal`, también usado desde la pantalla de consulta) —
+  respeta la misma regla de "un doctor solo ve lo suyo".
+- **Duplicados de paciente**: nombre dividido en Nombre(s)/Apellido
+  paterno/materno + fecha de nacimiento obligatoria; si coincide con uno
+  existente, pregunta "¿es la misma persona?" en vez de bloquear o crear
+  ciego.
 
-1. Horario semanal recurrente por doctor (`NEGOCIO.md` sección 11) —
-   falta modelar (tabla nueva de bloques día/hora) y construir la UI,
-   editable por el doctor desde su perfil o por el admin. "Nueva cita"
-   hoy no valida contra un horario (solo evita encimes con otras citas).
-2. "+ Nuevo paciente" como pantalla propia en `/dashboard/pacientes`
-   (hoy solo se puede crear un paciente desde dentro del modal de
-   "Nueva cita", no hay alta independiente).
-3. Probar el flujo completo de "Nueva cita" end-to-end con datos reales.
+### Esquema de base de datos
 
-## Conocido / pendiente de resolver
+`supabase/schema.sql` es la versión canónica completa (para un proyecto
+Supabase nuevo, correr solo este archivo). `supabase/migrations/002` a
+`010` son los incrementales ya aplicados al proyecto piloto existente —
+no hace falta correrlos en una instalación nueva. Tablas: `clinics`,
+`users`, `doctors`, `patients`, `appointments`, `consultations`,
+`prescription_items`.
 
-- **Next.js 14.2.5 tiene una vulnerabilidad de seguridad crítica**
-  reportada por `npm install` (ver
-  https://nextjs.org/blog/security-update-2025-12-11). No se ha
-  actualizado todavía — decidir si se sube de versión antes o después de
-  conectar Supabase.
-- El botón "+ Nuevo paciente" de `/dashboard/pacientes` sigue sin
-  funcionalidad (la única forma de crear un paciente hoy es desde dentro
-  del modal de "Nueva cita").
-- La validación de encime de horarios en "Nueva cita" se hace a nivel de
-  app (consulta antes de insertar), no con un constraint de base de
-  datos — con el volumen de una clínica piloto el riesgo de condición de
-  carrera es despreciable, pero es una limitación conocida si el
-  volumen crece.
-- No hay tests configurados.
-- `/dashboard/perfil` es un stub de solo lectura (nombre, correo,
-  clínica, función, permisos) — no tiene todavía cambio de contraseña
-  voluntario ni edición de nombre.
+## Próximos pasos / pendientes conocidos
 
-## Decisiones de diseño pendientes de implementar
+1. **"+ Nuevo paciente" independiente** en `/dashboard/pacientes` — hoy
+   solo se puede crear un paciente desde dentro del modal de "Nueva
+   cita", no hay alta suelta.
+2. **Horario semanal con variación por día/excepciones** — hoy la
+   jornada del doctor es un solo horario fijo (inicio/fin), sin
+   diferenciar días de la semana ni vacaciones/días festivos. Alcance
+   actual es intencionalmente simple (ver `NEGOCIO.md` sección 11).
+3. **Planes y límites de usuarios** (`NEGOCIO.md` sección 9): 3 niveles
+   definidos (Básico ≤4 doctores, Intermedio 5–10, Plus 11+) con tope
+   dinámico de staff no-doctor (3× # doctores) — **no implementado en
+   código**, no hay tabla de planes ni enforcement del límite, ni
+   precios definidos en MXN.
+4. **Imprimir la receta** — hoy solo hay vista previa en pantalla, no
+   hay botón de impresión ni PDF.
+5. **Catálogo de medicamentos** — se investigó (sin implementar); no
+   existe una API pública gratuita en México, la opción más realista es
+   extraer el Cuadro Básico (PDF oficial) una sola vez a una tabla propia.
+6. **Reportes** (citas por mes, tasa de no-shows, ingresos) y
+   **recordatorios automáticos** (email/WhatsApp) — fase 2, no iniciado.
+7. **Next.js 14.2.5 tiene una vulnerabilidad de seguridad conocida**
+   (ver https://nextjs.org/blog/security-update-2025-12-11) — no
+   actualizado todavía, decidir cuándo subir de versión.
+8. **La validación de encime de horarios** se hace a nivel app (consulta
+   antes de insertar), no con un constraint de base de datos — riesgo de
+   condición de carrera despreciable al volumen actual, pero es una
+   limitación conocida si crece mucho el volumen concurrente.
+9. **Login sin "solicita una demo"** — está decidido que el login no
+   debe tener registro público sino un link/formulario de contacto, pero
+   ese link todavía no existe en `/login`.
+10. No hay tests configurados.
 
-- **Gestión de usuarios** (ver `NEGOCIO.md` sección 8) — **implementado**
-  el 2026-07-11/12: solo admins gestionan staff de su clínica
-  (crear/suspender/eliminar/reset password vía `/dashboard/usuarios`);
-  "admin" es un permiso (`is_admin` booleano) separado de la función
-  clínica (`role`: doctor/receptionist). Sin registro público — login
-  solo tiene "solicita una demo" (pendiente: ese link/formulario en sí
-  todavía no existe en el login).
-- **Planes y límites de usuarios** (ver `NEGOCIO.md` sección 9): 3 planes
-  (Básico ≤4 doctores, Intermedio 5–10, Plus 11+) basados en # de
-  doctores, no en staff total. Staff no-doctor con tope dinámico de 3× el
-  # de doctores; al llegar al tope la app debe sugerir upgrade/add-on en
-  vez de bloquear. Falta definir precios en MXN y el tope superior exacto
-  del plan Plus. **No implementado en código todavía** (no hay tabla de
-  planes ni enforcement del límite).
-- **Agenda / calendario** (ver `NEGOCIO.md` sección 10) —
-  **implementado** el 2026-07-12: filtro de doctor dentro de la misma
-  vista, un solo home (`/dashboard/citas`) con default inteligente del
-  filtro según el rol (doctor → "yo", admin/recepción → "todos"), vistas
-  día (default, hoy)/semana/mes con navegación, usando `react-big-calendar`
-  (MIT, gratis).
-- **Duración de consulta y horario del doctor** (ver `NEGOCIO.md` sección
-  11): duración estimada por doctor como campo opcional en el alta de
-  usuario — **implementado** el 2026-07-12 (`clinics.default_appointment_duration_minutes`
-  default 30, `doctors.default_duration_minutes` opcional, campo en el
-  formulario de "Nuevo usuario" cuando el rol es doctor). **Pendiente:**
-  el horario semanal recurrente en sí (no construido todavía — sin eso,
-  "+ Nueva cita" no puede sugerir huecos válidos), editable por el propio
-  doctor desde su perfil o por el admin. Alcance inicial simple: sin
-  excepciones ni tipos de consulta con duración distinta.
+## Historial de sesiones (resumen)
 
-## Fase 2 (sugerido en el README original, no iniciado)
-
-- Recordatorios automáticos (email vía Resend, o WhatsApp Business Cloud
-  API).
-- Reportes: citas por mes, tasa de no-shows, ingresos.
-
-## Historial de sesiones
-
-- **2026-07-11**: Descompresión del zip, `npm install`, documentación
-  inicial (`CLAUDE.md`, este archivo). Aún no se ha creado el proyecto de
-  Supabase.
-- **2026-07-11**: Se agregó `NEGOCIO.md` con el modelo de negocio
-  (renta mensual por clínica, niveles por # de doctores), la restricción
-  de costo $0/mes en fase piloto, y la nota legal sobre datos de salud
-  como "datos sensibles" bajo la LFPDPPP (México) — requiere aviso de
-  privacidad, ya cubierto en parte por RLS.
-- **2026-07-11**: Proyecto de Supabase creado y conectado (`.env.local`,
-  schema ejecutado, clínica piloto "Clínica Tlaxco" + usuario admin Jose
-  Antonio Blancas creados). Login probado y funcionando.
-- **2026-07-11/12**: Definidas y documentadas en `NEGOCIO.md` las reglas
-  de negocio de gestión de usuarios (sección 8) y planes/precios (sección
-  9). Implementada la gestión de usuarios en código: migración SQL
-  (`supabase/migrations/002_admin_permission.sql`, agrega `is_admin` y
-  `active` a `users`, políticas RLS admin-only), cliente admin
-  server-side (`lib/supabase/admin.ts`, usa `SUPABASE_SERVICE_ROLE_KEY`),
-  vista `/dashboard/usuarios` con crear (modal, contraseña temporal
-  mostrada una vez)/suspender/reactivar/eliminar/resetear contraseña.
-  Agregado cambio de contraseña obligatorio en primer login
-  (`/dashboard/cambiar-password`, bandera `must_change_password` en
-  metadata, forzado vía `middleware.ts`) con toggle de mostrar/ocultar
-  contraseña. Rediseñado el shell del dashboard: header superior nuevo
-  (`components/DashboardHeader.tsx`) con menú de perfil/cerrar sesión,
-  sidebar (`components/DashboardNav.tsx`) simplificado a solo links, y
-  stub de `/dashboard/perfil`.
-- **2026-07-12**: Discusión y documentación (sin código) de cómo debe
-  funcionar la agenda/calendario — filtro de doctor, home único con
-  default inteligente por rol (`NEGOCIO.md` sección 10).
-- **2026-07-12**: Confirmado que `react-big-calendar` es gratuito
-  (licencia MIT, sin tiers de pago). Implementado el calendario de
-  `/dashboard/citas` (`AgendaCalendar.tsx`) con vistas día/semana/mes,
-  filtro de doctor, y colores por estado de cita. De paso se corrigió un
-  bug preexistente (no relacionado) en `lib/supabase/server.ts` y
-  `middleware.ts` que rompía `npm run build` por tipos implícitos `any`.
-- **2026-07-12**: Definida (sin código) la forma de manejar duración de
-  consulta y horario del doctor — campo de duración opcional en el alta
-  de usuario, horario semanal editable aparte por el doctor o el admin
-  (`NEGOCIO.md` sección 11).
-- **2026-07-12**: Implementada la duración de consulta: migración SQL
-  (`supabase/migrations/003_doctor_duration.sql`, agrega
-  `clinics.default_appointment_duration_minutes` y
-  `doctors.default_duration_minutes`), campo "Duración de consulta"
-  agregado al formulario de "Nuevo usuario" cuando el rol es doctor.
-  Horario semanal queda pendiente para una sesión futura.
-- **2026-07-12**: Implementado el formulario de "+ Nueva cita"
-  (`app/dashboard/citas/NewAppointmentModal.tsx`): buscador de pacientes
-  con alta rápida inline, selector de doctor con duración
-  auto-calculada (propia o default de la clínica, editable), validación
-  de encime de horario antes de guardar, y clic en un hueco vacío del
-  calendario (día/semana) para precargar fecha/hora. El calendario se
-  refresca solo tras crear la cita.
+- **2026-07-11**: Setup inicial — descompresión del proyecto, `npm
+  install`, conexión a Supabase (clínica piloto + admin creados),
+  documentación base (`CLAUDE.md`, `NEGOCIO.md`, este archivo).
+- **2026-07-11/12**: Gestión de usuarios completa (crear/suspender/
+  eliminar/resetear, `is_admin` como permiso separado de `role`),
+  cambio de contraseña obligatorio en primer login, shell nuevo
+  (header + menú de perfil).
+- **2026-07-12**: Calendario real con `react-big-calendar` (MIT,
+  confirmado gratuito), duración de consulta por doctor, formulario de
+  "Nueva cita" con alta de paciente, corrección de bug preexistente en
+  `lib/supabase/server.ts`/`middleware.ts` (tipos implícitos `any`
+  rompían `npm run build`).
+- **2026-07-12/13**: Búsqueda sin acentos + detección de duplicados de
+  paciente (nombre dividido en 3 campos + fecha de nacimiento
+  obligatoria), horario de jornada por doctor (cuadrícula del calendario
+  alineada a sus intervalos reales, selector de horas válidas en "Nueva
+  cita"), loading states en toda la navegación, columna de correo en
+  Usuarios, popover de pacientes existentes, aviso de "¿agendar de
+  todos modos?" para horarios ocupados en vez de ocultarlos.
+- **2026-07-13/14**: Un doctor no-admin restringido a ver/gestionar solo
+  sus propias citas (RLS, migración 007) — incluye caso de "cubrir a un
+  colega" resuelto con reasignación de doctor, no con excepción de
+  permisos. Cambio de estado de cita con un clic en el badge. Módulo de
+  **consultas**: signos vitales + notas (tabla `consultations`,
+  migración 008), pantalla `/dashboard/citas/[id]/consulta` con acceso
+  diferenciado doctor vs. recepción.
+- **2026-07-14/15**: Módulo de **recetas**: medicamentos dinámicos
+  (`prescription_items`, migración 009) con vista previa en vivo,
+  presentación farmacéutica (tableta/cápsula/jarabe/gotas/inyección/
+  crema/otro) para armar la frase de dosis correctamente (migración
+  010). Historial de consultas por paciente (`PatientHistoryModal`,
+  compartido entre Pacientes y Consulta). Investigación (sin código) de
+  catálogos de medicamentos en México — sin API pública gratuita
+  disponible.
+- **2026-07-16**: Proyecto subido a GitHub (`clinicatlaxco958-source/Clinica`).
+  Reescritura completa de `CLAUDE.md` y este archivo para reflejar todo
+  lo construido — la versión anterior llevaba varias sesiones sin
+  actualizarse mientras se avanzaba rápido en código.
