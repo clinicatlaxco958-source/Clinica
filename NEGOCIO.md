@@ -230,7 +230,7 @@ filtro de doctor arranca en "yo"; si es recepción/admin, arranca en
 navegación entre ellas. **Implementado** con `react-big-calendar`
 (licencia MIT, gratis) — ver `app/dashboard/citas/AgendaCalendar.tsx`.
 
-## 11. Duración de consulta y horario del doctor (decidido, pendiente de implementar)
+## 11. Duración de consulta y horario del doctor (implementado)
 
 Para que "+ Nueva cita" pueda sugerir horarios válidos y evitar encimar
 citas, cada doctor necesita dos datos de configuración:
@@ -252,11 +252,63 @@ respaldo (mismo patrón que el resto de gestión de usuarios: el admin
 tiene el permiso más amplio, pero aquí el doctor también tiene acceso a
 lo suyo).
 
-**Alcance inicial (mantenerlo simple):** un horario semanal recurrente
-(ej. Lun-Vie 9:00-14:00 y 16:00-19:00), sin excepciones (días festivos,
-vacaciones) ni tipos de consulta con duraciones distintas todavía — eso
-queda para una fase posterior si la clínica piloto lo pide.
+**Alcance inicial (mantenerlo simple):** por ahora es un horario **fijo**
+(una sola hora de inicio y fin, sin variar por día de la semana), sin
+excepciones (días festivos, vacaciones) ni tipos de consulta con
+duraciones distintas — eso queda para una fase posterior si la clínica
+piloto lo pide (ver `PROGRESS.md`, "Próximos pasos").
 
-Nada de esto está implementado todavía — decisión de diseño documentada
-para cuando se construya el formulario de "Nueva cita" (ver `PROGRESS.md`
-para el estado de esta conversación).
+**Implementado:** `doctors.default_duration_minutes`,
+`doctors.work_start_time`/`work_end_time` (con default a nivel
+`clinics` si el doctor no los define), editable desde `/dashboard/perfil`.
+La cuadrícula del calendario y el selector de horas de "Nueva cita" ya
+usan estos valores.
+
+## 12. Consultas, recetas e historial clínico (implementado)
+
+**Alcance del expediente clínico — mínimo viable a propósito.** Se
+decidió no construir un expediente completo desde el inicio, sino
+arrancar angosto: signos vitales (peso, talla, temperatura, presión) +
+notas de consulta + receta de medicamentos, todo ligado a la cita. Se
+amplía después según lo que el doctor realmente use en el día a día.
+
+**División de quién puede hacer qué dentro de una cita:**
+- **El doctor dueño de la cita** puede iniciar la "Consulta" completa:
+  ver/editar signos vitales, escribir notas de consulta, y prescribir
+  medicamentos.
+- **Recepción** (o cualquier staff sin función de doctor) solo puede
+  **capturar signos vitales** — no ve ni puede escribir notas de
+  consulta ni la receta. Esto refleja que tomar peso/talla/temperatura/
+  presión es una tarea común de recepción antes de que el doctor pase al
+  paciente, pero diagnosticar y prescribir es exclusivo del doctor.
+- **La regla de "de quién es la cita" se decide comparando el doctor
+  dueño de la cita contra quien tiene la sesión abierta** — no por rol.
+  Esto importa porque una misma persona puede ser doctor y admin a la
+  vez (ver sección 8): un doctor-admin viendo la agenda de un colega NO
+  debe poder "iniciar consulta" en una cita que no es suya, aunque sí sea
+  doctor. Ver `CLAUDE.md` para el detalle técnico (comparación de
+  `doctor_id` de la cita contra el `auth_doctor_id()` del usuario).
+
+**Cubrir a un doctor ausente:** si un doctor no puede llegar y otro
+doctor (con permiso de admin) decide atender sus citas, la forma correcta
+es **reasignar la cita** al doctor que efectivamente va a atender —no
+darle acceso especial a "iniciar consulta" en citas ajenas. Así el
+registro queda correcto (quién realmente vio al paciente), en vez de
+decir que lo vio el doctor original cuando no fue así. Solo admin/
+recepción pueden reasignar (un doctor no-admin no puede mover una cita
+suya a otro doctor por su cuenta).
+
+**Receta médica:** cada medicamento tiene nombre, **presentación**
+(tableta, cápsula, jarabe/suspensión, gotas, inyección/ampolleta,
+crema/ungüento, u "otro" con instrucción libre), cantidad, frecuencia
+(cada cuántas horas) y duración (cuántos días). La presentación
+determina el verbo y la unidad al armar la frase ("Tomar 1 tableta...",
+"Aplicar 5 gotas..."); "otro" existe para casos que no se dosifican con
+un número limpio (ej. cremas: "aplicar una capa delgada..."). Hay vista
+previa de la receta en pantalla, pero **todavía no hay forma de
+imprimirla** (ver `PROGRESS.md`).
+
+**Historial de paciente:** desde la lista de pacientes o desde la propia
+pantalla de consulta, se puede ver el historial de consultas de un
+paciente — respeta la misma regla de acceso (un doctor solo ve las
+consultas que él mismo tuvo con ese paciente).
