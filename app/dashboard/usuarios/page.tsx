@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { formatMxPhoneForDisplay } from "@/lib/phone";
 import CreateUserForm from "./CreateUserForm";
 import UserRowActions from "./UserRowActions";
 
@@ -35,13 +36,16 @@ export default async function UsuariosPage() {
   // cliente admin (solo server-side), acotado a los ids ya filtrados por
   // RLS arriba (no expone usuarios de otras clínicas).
   const admin = createAdminClient();
-  const emailEntries = await Promise.all(
+  const contactEntries = await Promise.all(
     (staff ?? []).map(async (u) => {
       const { data } = await admin.auth.admin.getUserById(u.id);
-      return [u.id, data.user?.email ?? null] as const;
+      return [
+        u.id,
+        { email: data.user?.email ?? null, phone: data.user?.phone ?? null },
+      ] as const;
     })
   );
-  const emailByUserId = new Map(emailEntries);
+  const contactByUserId = new Map(contactEntries);
 
   return (
     <div>
@@ -57,6 +61,7 @@ export default async function UsuariosPage() {
             <tr>
               <th className="px-4 py-3">Nombre</th>
               <th className="px-4 py-3">Correo</th>
+              <th className="px-4 py-3">Teléfono</th>
               <th className="px-4 py-3">Función</th>
               <th className="px-4 py-3">Admin</th>
               <th className="px-4 py-3">Estado</th>
@@ -71,7 +76,13 @@ export default async function UsuariosPage() {
                     {u.full_name}
                   </td>
                   <td className="px-4 py-3 text-slate-500">
-                    {emailByUserId.get(u.id) ?? "—"}
+                    {contactByUserId.get(u.id)?.email ?? "—"}
+                  </td>
+                  <td className="px-4 py-3 text-slate-500">
+                    {(() => {
+                      const phone = contactByUserId.get(u.id)?.phone;
+                      return phone ? formatMxPhoneForDisplay(phone) : "—";
+                    })()}
                   </td>
                   <td className="px-4 py-3 text-slate-500">
                     {u.role ? roleLabels[u.role] ?? u.role : "—"}
@@ -102,7 +113,7 @@ export default async function UsuariosPage() {
             ) : (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={7}
                   className="px-4 py-10 text-center text-slate-400"
                 >
                   No hay usuarios registrados.

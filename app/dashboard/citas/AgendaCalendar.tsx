@@ -235,7 +235,7 @@ export default function AgendaCalendar({
       style: {
         backgroundColor: statusColors[event.status] ?? "#64748b",
         borderRadius: "6px",
-        border: "none",
+        border: "1px solid #e2e8f0",
         color: "white",
       },
     }),

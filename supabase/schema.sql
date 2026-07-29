@@ -69,6 +69,12 @@ create table doctors (
   -- Horario fijo por ahora (sin variar por día de la semana ni excepciones).
   work_start_time time,
   work_end_time time,
+  -- Datos para el encabezado de la receta impresa.
+  university text,
+  license_number text,
+  logo_url text,
+  -- Marca de agua de fondo de la receta impresa (mismo bucket que logo_url).
+  watermark_url text,
   created_at timestamptz not null default now(),
   constraint doctors_work_hours_check
     check (work_start_time is null or work_end_time is null or work_start_time < work_end_time)
@@ -367,6 +373,35 @@ create policy "prescription_items delete" on prescription_items
         and (auth_is_admin() or a.doctor_id = auth_doctor_id())
     )
   );
+
+-- ------------------------------------------------------------
+-- Storage: bucket para el logo del doctor (encabezado de receta impresa)
+-- ------------------------------------------------------------
+
+-- Bucket público (son solo imágenes de logo, sin datos sensibles) para
+-- que cada doctor suba su logo desde /dashboard/perfil.
+insert into storage.buckets (id, name, public)
+values ('doctor-logos', 'doctor-logos', true)
+on conflict (id) do nothing;
+
+-- Un doctor solo puede subir/editar/borrar objetos dentro de su propia
+-- carpeta (convención de path: `${auth.uid()}/logo.<ext>`).
+drop policy if exists "doctor manage own logo" on storage.objects;
+create policy "doctor manage own logo" on storage.objects
+  for all using (
+    bucket_id = 'doctor-logos'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  )
+  with check (
+    bucket_id = 'doctor-logos'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+-- Lectura pública (el bucket ya es público, pero se agrega la política
+-- explícita por si se consulta vía API en vez de la URL pública directa).
+drop policy if exists "public read doctor logos" on storage.objects;
+create policy "public read doctor logos" on storage.objects
+  for select using (bucket_id = 'doctor-logos');
 
 -- ============================================================
 -- Nota: cuando crees el primer usuario admin de una clínica,

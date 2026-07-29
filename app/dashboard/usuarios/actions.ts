@@ -4,11 +4,12 @@ import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { normalizeMxPhone } from "@/lib/phone";
 
 type ActionResult =
   | { error: string }
   | { success: true }
-  | { tempPassword: string; email?: string };
+  | { tempPassword: string; email?: string; phone?: string };
 
 function generateTempPassword() {
   return randomUUID().replace(/-/g, "").slice(0, 12);
@@ -41,6 +42,7 @@ export async function createStaffUser(
   const { clinicId } = await requireAdmin();
 
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const phoneRaw = String(formData.get("phone") ?? "").trim();
   const fullName = String(formData.get("full_name") ?? "").trim();
   const role = (String(formData.get("role") ?? "") || null) as
     | "doctor"
@@ -51,8 +53,20 @@ export async function createStaffUser(
   const durationMinutes = durationRaw ? Number(durationRaw) : null;
   const isAdmin = formData.get("is_admin") === "on";
 
-  if (!email || !fullName) {
-    return { error: "Correo y nombre son obligatorios." };
+  if (!fullName) {
+    return { error: "El nombre es obligatorio." };
+  }
+
+  if (!email && !phoneRaw) {
+    return { error: "Captura correo o teléfono (al menos uno)." };
+  }
+
+  let phone: string | null = null;
+  if (phoneRaw) {
+    phone = normalizeMxPhone(phoneRaw);
+    if (!phone) {
+      return { error: "El teléfono debe tener 10 dígitos (México)." };
+    }
   }
 
   if (durationRaw && (!Number.isInteger(durationMinutes) || (durationMinutes as number) <= 0)) {
@@ -64,9 +78,15 @@ export async function createStaffUser(
 
   const { data: created, error: createError } =
     await admin.auth.admin.createUser({
-      email,
+      email: email || undefined,
+      phone: phone || undefined,
       password: tempPassword,
-      email_confirm: true,
+      email_confirm: !!email,
+      // Sin envío de OTP todavía (sin proveedor de SMS/WhatsApp
+      // configurado) — se confía el número tal cual, solo validado en
+      // formato. Cuando haya presupuesto para un proveedor, este flag
+      // pasa a depender de la verificación real.
+      phone_confirm: !!phone,
       user_metadata: { must_change_password: true },
     });
 
@@ -97,7 +117,7 @@ export async function createStaffUser(
   }
 
   revalidatePath("/dashboard/usuarios");
-  return { tempPassword, email };
+  return { tempPassword, email: email || undefined, phone: phone || undefined };
 }
 
 export async function setUserActive(

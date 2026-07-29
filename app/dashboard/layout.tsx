@@ -36,7 +36,7 @@ export default async function DashboardLayout({
       />
       <div className="flex flex-1">
         <DashboardNav isAdmin={profile.is_admin ?? false} />
-        <main className="flex-1 p-8">{children}</main>
+        <main className="print:p-0 flex-1 p-8">{children}</main>
       </div>
     </div>
   );
