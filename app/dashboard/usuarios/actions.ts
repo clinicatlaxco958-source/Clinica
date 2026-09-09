@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { normalizeMxPhone } from "@/lib/phone";
+import { friendlyErrorMessage } from "@/lib/errors";
 
 type ActionResult =
   | { error: string }
@@ -52,6 +53,7 @@ export async function createStaffUser(
   const durationRaw = String(formData.get("duration_minutes") ?? "").trim();
   const durationMinutes = durationRaw ? Number(durationRaw) : null;
   const isAdmin = formData.get("is_admin") === "on";
+  const isPharmacy = formData.get("is_pharmacy") === "on";
 
   if (!fullName) {
     return { error: "El nombre es obligatorio." };
@@ -91,7 +93,12 @@ export async function createStaffUser(
     });
 
   if (createError || !created.user) {
-    return { error: createError?.message ?? "No se pudo crear el usuario." };
+    const message = createError?.message ?? "";
+    return {
+      error: message.toLowerCase().includes("already")
+        ? "Ya existe un usuario con ese correo o teléfono."
+        : "No se pudo crear el usuario. Intenta de nuevo.",
+    };
   }
 
   const { error: insertError } = await admin.from("users").insert({
@@ -100,11 +107,17 @@ export async function createStaffUser(
     full_name: fullName,
     role,
     is_admin: isAdmin,
+    is_pharmacy: isPharmacy,
   });
 
   if (insertError) {
     await admin.auth.admin.deleteUser(created.user.id);
-    return { error: insertError.message };
+    return {
+      error: friendlyErrorMessage(
+        insertError,
+        "No se pudo crear el usuario. Intenta de nuevo."
+      ),
+    };
   }
 
   if (role === "doctor") {
@@ -132,7 +145,14 @@ export async function setUserActive(
     .update({ active })
     .eq("id", userId);
 
-  if (error) return { error: error.message };
+  if (error) {
+    return {
+      error: friendlyErrorMessage(
+        error,
+        "No se pudo actualizar el usuario. Intenta de nuevo."
+      ),
+    };
+  }
 
   revalidatePath("/dashboard/usuarios");
   return { success: true };
@@ -143,7 +163,9 @@ export async function deleteStaffUser(userId: string): Promise<ActionResult> {
   const admin = createAdminClient();
 
   const { error } = await admin.auth.admin.deleteUser(userId);
-  if (error) return { error: error.message };
+  if (error) {
+    return { error: "No se pudo eliminar el usuario. Intenta de nuevo." };
+  }
 
   revalidatePath("/dashboard/usuarios");
   return { success: true };
@@ -161,7 +183,11 @@ export async function resetStaffPassword(
     user_metadata: { must_change_password: true },
   });
 
-  if (error) return { error: error.message };
+  if (error) {
+    return {
+      error: "No se pudo restablecer la contraseña. Intenta de nuevo.",
+    };
+  }
 
   return { tempPassword };
 }

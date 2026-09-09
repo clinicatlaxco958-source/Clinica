@@ -17,7 +17,7 @@ export default async function DashboardLayout({
 
   const { data: profile } = await supabase
     .from("users")
-    .select("full_name, is_admin, clinics(name)")
+    .select("full_name, is_admin, is_pharmacy, clinics(name)")
     .eq("id", user.id)
     .single();
 
@@ -35,7 +35,12 @@ export default async function DashboardLayout({
         clinicName={(profile.clinics as any)?.name ?? "Clínica"}
       />
       <div className="flex flex-1">
-        <DashboardNav isAdmin={profile.is_admin ?? false} />
+        <DashboardNav
+          isAdmin={profile.is_admin ?? false}
+          canAccessPharmacy={
+            (profile.is_admin || profile.is_pharmacy) ?? false
+          }
+        />
         <main className="print:p-0 flex-1 p-8">{children}</main>
       </div>
     </div>

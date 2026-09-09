@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { friendlyErrorMessage } from "@/lib/errors";
 
 type PatientResult = {
   id: string;
@@ -146,7 +147,12 @@ export default function NewPatientModal({
     setSubmitting(false);
 
     if (insertError) {
-      setError(insertError.message);
+      setError(
+        friendlyErrorMessage(
+          insertError,
+          "No se pudo guardar el paciente. Intenta de nuevo."
+        )
+      );
       return;
     }
 

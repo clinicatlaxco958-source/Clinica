@@ -180,6 +180,19 @@ export default function CreateUserForm() {
                         Dar permiso de administrador
                       </label>
                     </div>
+                    <div className="col-span-2 flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="is_pharmacy"
+                        name="is_pharmacy"
+                      />
+                      <label
+                        htmlFor="is_pharmacy"
+                        className="text-sm text-slate-700"
+                      >
+                        Dar acceso a farmacia
+                      </label>
+                    </div>
                   </div>
 
                   {error && (

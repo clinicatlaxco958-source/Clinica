@@ -80,6 +80,10 @@ export type MedicationRow = {
   customInstruction: string;
   frequencyHours: string;
   durationDays: string;
+  // Vínculo opcional al catálogo de farmacia (pharmacy_items.id). Solo
+  // trazabilidad/sugerencia de stock — medicationName sigue siendo texto
+  // libre y no depende de este campo.
+  pharmacyItemId: string | null;
 };
 
 export function formatDose(m: MedicationRow) {
@@ -105,5 +109,6 @@ export function emptyMedication(): MedicationRow {
     customInstruction: "",
     frequencyHours: "",
     durationDays: "",
+    pharmacyItemId: null,
   };
 }

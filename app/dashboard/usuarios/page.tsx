@@ -29,7 +29,7 @@ export default async function UsuariosPage() {
 
   const { data: staff } = await supabase
     .from("users")
-    .select("id, full_name, role, is_admin, active, created_at")
+    .select("id, full_name, role, is_admin, is_pharmacy, active, created_at")
     .order("created_at");
 
   // El correo vive en auth.users, no en public.users — se trae vía el
@@ -64,6 +64,7 @@ export default async function UsuariosPage() {
               <th className="px-4 py-3">Teléfono</th>
               <th className="px-4 py-3">Función</th>
               <th className="px-4 py-3">Admin</th>
+              <th className="px-4 py-3">Farmacia</th>
               <th className="px-4 py-3">Estado</th>
               <th className="px-4 py-3">Acciones</th>
             </tr>
@@ -90,6 +91,9 @@ export default async function UsuariosPage() {
                   <td className="px-4 py-3 text-slate-500">
                     {u.is_admin ? "Sí" : "—"}
                   </td>
+                  <td className="px-4 py-3 text-slate-500">
+                    {u.is_pharmacy ? "Sí" : "—"}
+                  </td>
                   <td className="px-4 py-3">
                     <span
                       className={`rounded-full px-2 py-1 text-xs font-medium ${
@@ -113,7 +117,7 @@ export default async function UsuariosPage() {
             ) : (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={8}
                   className="px-4 py-10 text-center text-slate-400"
                 >
                   No hay usuarios registrados.

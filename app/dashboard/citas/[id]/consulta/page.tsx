@@ -59,10 +59,33 @@ export default async function ConsultaPage({
   const { data: medications } = await supabase
     .from("prescription_items")
     .select(
-      "id, medication_name, presentation, quantity, custom_instruction, frequency_hours, duration_days"
+      "id, medication_name, presentation, quantity, custom_instruction, frequency_hours, duration_days, pharmacy_item_id"
     )
     .eq("appointment_id", appointment.id)
     .order("created_at");
+
+  const { data: pharmacyItemRows } = await supabase
+    .from("pharmacy_items")
+    .select("id, name")
+    .eq("clinic_id", profile.clinic_id)
+    .eq("active", true)
+    .order("name");
+
+  const { data: pharmacyMovementRows } = await supabase
+    .from("pharmacy_movements")
+    .select("item_id, movement_type, quantity_boxes")
+    .eq("clinic_id", profile.clinic_id);
+
+  const stockByItem = new Map<string, number>();
+  for (const mv of pharmacyMovementRows ?? []) {
+    const delta = mv.movement_type === "entrada" ? mv.quantity_boxes : -mv.quantity_boxes;
+    stockByItem.set(mv.item_id, (stockByItem.get(mv.item_id) ?? 0) + delta);
+  }
+  const pharmacyItems = (pharmacyItemRows ?? []).map((item) => ({
+    id: item.id,
+    name: item.name,
+    currentStockBoxes: stockByItem.get(item.id) ?? 0,
+  }));
 
   const patient = appointment.patients as any;
   const doctor = appointment.doctors as any;
@@ -119,7 +142,9 @@ export default async function ConsultaPage({
           customInstruction: m.custom_instruction ?? "",
           frequencyHours: String(m.frequency_hours),
           durationDays: String(m.duration_days),
+          pharmacyItemId: m.pharmacy_item_id ?? null,
         }))}
+        pharmacyItems={pharmacyItems}
         clinicName={clinic?.name ?? "Clínica"}
         clinicAddress={clinic?.address ?? null}
         clinicPhone={clinic?.phone ?? null}

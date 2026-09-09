@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { PasswordField } from "@/components/PasswordField";
+import { friendlyErrorMessage } from "@/lib/errors";
 
 export default function CambiarPasswordPage() {
   const router = useRouter();
@@ -33,7 +34,12 @@ export default function CambiarPasswordPage() {
     });
 
     if (error) {
-      setError(error.message);
+      setError(
+        friendlyErrorMessage(
+          error,
+          "No se pudo actualizar la contraseña. Intenta de nuevo."
+        )
+      );
       setLoading(false);
       return;
     }

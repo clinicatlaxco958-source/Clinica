@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { friendlyErrorMessage } from "@/lib/errors";
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
@@ -166,7 +167,7 @@ export default function DoctorSettingsForm({
 
           if (uploadError) {
             setLogoError(
-              `No se pudo subir el logo: ${uploadError.message}. Se guardó el resto de los cambios.`
+              "No se pudo subir el logo. Se guardó el resto de los cambios."
             );
           } else {
             const {
@@ -185,7 +186,7 @@ export default function DoctorSettingsForm({
 
           if (uploadError) {
             setWatermarkError(
-              `No se pudo subir la marca de agua: ${uploadError.message}. Se guardó el resto de los cambios.`
+              "No se pudo subir la marca de agua. Se guardó el resto de los cambios."
             );
           } else {
             const {
@@ -214,7 +215,12 @@ export default function DoctorSettingsForm({
     setSaving(false);
 
     if (updateError) {
-      setError(updateError.message);
+      setError(
+        friendlyErrorMessage(
+          updateError,
+          "No se pudo guardar el perfil. Intenta de nuevo."
+        )
+      );
       return;
     }
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { createClient } from "@/lib/supabase/client";
+import { friendlyErrorMessage } from "@/lib/errors";
 import {
   PRESENTATIONS,
   emptyMedication,
@@ -34,6 +35,7 @@ export default function ConsultationForm({
   doctorLicenseNumber,
   doctorLogoUrl,
   doctorWatermarkUrl,
+  pharmacyItems,
 }: {
   appointmentId: string;
   clinicId: string;
@@ -55,6 +57,11 @@ export default function ConsultationForm({
   doctorLicenseNumber: string | null;
   doctorLogoUrl: string | null;
   doctorWatermarkUrl: string | null;
+  pharmacyItems: {
+    id: string;
+    name: string;
+    currentStockBoxes: number;
+  }[];
 }) {
   const router = useRouter();
   const supabase = createClient();
@@ -91,6 +98,33 @@ export default function ConsultationForm({
   ) {
     setMedications((rows) =>
       rows.map((row, i) => (i === index ? { ...row, [field]: value } : row))
+    );
+  }
+
+  // Escribir el nombre a mano desliga el medicamento del catálogo de
+  // farmacia (el vínculo solo se establece eligiendo del selector).
+  function updateMedicationName(index: number, value: string) {
+    setMedications((rows) =>
+      rows.map((row, i) =>
+        i === index
+          ? { ...row, medicationName: value, pharmacyItemId: null }
+          : row
+      )
+    );
+  }
+
+  function selectPharmacyItem(index: number, itemId: string) {
+    setMedications((rows) =>
+      rows.map((row, i) => {
+        if (i !== index) return row;
+        if (!itemId) return { ...row, pharmacyItemId: null };
+        const item = pharmacyItems.find((p) => p.id === itemId);
+        return {
+          ...row,
+          pharmacyItemId: itemId,
+          medicationName: item ? item.name : row.medicationName,
+        };
+      })
     );
   }
 
@@ -172,7 +206,12 @@ export default function ConsultationForm({
 
     if (upsertError) {
       setSaving(false);
-      setError(upsertError.message);
+      setError(
+        friendlyErrorMessage(
+          upsertError,
+          "No se pudieron guardar los signos vitales."
+        )
+      );
       return;
     }
 
@@ -186,7 +225,9 @@ export default function ConsultationForm({
 
       if (deleteError) {
         setSaving(false);
-        setError(deleteError.message);
+        setError(
+          friendlyErrorMessage(deleteError, "No se pudo guardar la receta.")
+        );
         return;
       }
 
@@ -203,12 +244,15 @@ export default function ConsultationForm({
               custom_instruction: m.customInstruction.trim() || null,
               frequency_hours: Number(m.frequencyHours),
               duration_days: Number(m.durationDays),
+              pharmacy_item_id: m.pharmacyItemId || null,
             }))
           );
 
         if (insertError) {
           setSaving(false);
-          setError(insertError.message);
+          setError(
+            friendlyErrorMessage(insertError, "No se pudo guardar la receta.")
+          );
           return;
         }
       }
@@ -312,11 +356,7 @@ export default function ConsultationForm({
                         placeholder="Medicamento"
                         value={m.medicationName}
                         onChange={(e) =>
-                          updateMedication(
-                            i,
-                            "medicationName",
-                            e.target.value
-                          )
+                          updateMedicationName(i, e.target.value)
                         }
                         className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
                       />
@@ -399,6 +439,27 @@ export default function ConsultationForm({
                         className="w-24 rounded-lg border border-slate-300 px-3 py-2 text-sm"
                       />
                     </div>
+
+                    {pharmacyItems.length > 0 && (
+                      <div className="mt-2">
+                        <select
+                          value={m.pharmacyItemId ?? ""}
+                          onChange={(e) =>
+                            selectPharmacyItem(i, e.target.value)
+                          }
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-500"
+                        >
+                          <option value="">De farmacia (opcional)</option>
+                          {pharmacyItems.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name} — {item.currentStockBoxes} caja
+                              {item.currentStockBoxes === 1 ? "" : "s"} en
+                              stock
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
                 );
               })}
