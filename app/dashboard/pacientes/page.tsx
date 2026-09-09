@@ -1,8 +1,22 @@
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import PatientsTable from "./PatientsTable";
+import NewPatientButton from "./NewPatientButton";
 
 export default async function PacientesPage() {
   const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: profile } = await supabase
+    .from("users")
+    .select("clinic_id")
+    .eq("id", user.id)
+    .single();
+
+  if (!profile) redirect("/login");
 
   const { data: patients } = await supabase
     .from("patients")
@@ -13,9 +27,7 @@ export default async function PacientesPage() {
     <div>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-lg font-semibold text-slate-900">Pacientes</h1>
-        <button className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
-          + Nuevo paciente
-        </button>
+        <NewPatientButton clinicId={profile.clinic_id} />
       </div>
 
       <PatientsTable patients={patients ?? []} />

@@ -8,7 +8,8 @@ export default function CreateUserForm() {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<{
-    email: string;
+    email?: string;
+    phone?: string;
     tempPassword: string;
   } | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -40,7 +41,8 @@ export default function CreateUserForm() {
       }
       if ("tempPassword" in result) {
         setCreated({
-          email: result.email ?? "",
+          email: result.email,
+          phone: result.phone,
           tempPassword: result.tempPassword,
         });
         formRef.current?.reset();
@@ -70,7 +72,7 @@ export default function CreateUserForm() {
             {created ? (
               <div className="text-sm">
                 <p className="font-medium text-green-800">
-                  Usuario {created.email} creado.
+                  Usuario {created.email || created.phone} creado.
                 </p>
                 <p className="mt-1 text-green-700">
                   Contraseña temporal (compártela solo con esta persona, no
@@ -103,17 +105,31 @@ export default function CreateUserForm() {
                         className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                       />
                     </div>
-                    <div className="col-span-2">
+                    <div>
                       <label className="mb-1 block text-sm font-medium text-slate-700">
                         Correo
                       </label>
                       <input
                         type="email"
                         name="email"
-                        required
                         className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                       />
                     </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">
+                        Teléfono
+                      </label>
+                      <input
+                        type="tel"
+                        name="phone"
+                        placeholder="10 dígitos"
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <p className="col-span-2 -mt-2 text-xs text-slate-400">
+                      Captura correo o teléfono (al menos uno). El teléfono
+                      todavía no valida por SMS, solo formato.
+                    </p>
                     <div className="col-span-2">
                       <label className="mb-1 block text-sm font-medium text-slate-700">
                         Función
@@ -162,6 +178,19 @@ export default function CreateUserForm() {
                         className="text-sm text-slate-700"
                       >
                         Dar permiso de administrador
+                      </label>
+                    </div>
+                    <div className="col-span-2 flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="is_pharmacy"
+                        name="is_pharmacy"
+                      />
+                      <label
+                        htmlFor="is_pharmacy"
+                        className="text-sm text-slate-700"
+                      >
+                        Dar acceso a farmacia
                       </label>
                     </div>
                   </div>

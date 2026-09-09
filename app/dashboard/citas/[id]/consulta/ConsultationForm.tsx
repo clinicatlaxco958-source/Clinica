@@ -2,117 +2,17 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 import { createClient } from "@/lib/supabase/client";
-
-type PresentationValue =
-  | "tableta"
-  | "capsula"
-  | "jarabe"
-  | "gotas"
-  | "inyeccion"
-  | "crema"
-  | "otro";
-
-const PRESENTATIONS: {
-  value: PresentationValue;
-  label: string;
-  verb: string;
-  unitSingular: string;
-  unitPlural: string;
-  needsQuantity: boolean;
-}[] = [
-  {
-    value: "tableta",
-    label: "Tableta",
-    verb: "Tomar",
-    unitSingular: "tableta",
-    unitPlural: "tabletas",
-    needsQuantity: true,
-  },
-  {
-    value: "capsula",
-    label: "Cápsula",
-    verb: "Tomar",
-    unitSingular: "cápsula",
-    unitPlural: "cápsulas",
-    needsQuantity: true,
-  },
-  {
-    value: "jarabe",
-    label: "Jarabe/Suspensión (mL)",
-    verb: "Tomar",
-    unitSingular: "mL",
-    unitPlural: "mL",
-    needsQuantity: true,
-  },
-  {
-    value: "gotas",
-    label: "Gotas",
-    verb: "Aplicar",
-    unitSingular: "gota",
-    unitPlural: "gotas",
-    needsQuantity: true,
-  },
-  {
-    value: "inyeccion",
-    label: "Inyección/Ampolleta",
-    verb: "Aplicar",
-    unitSingular: "ampolleta",
-    unitPlural: "ampolletas",
-    needsQuantity: true,
-  },
-  {
-    value: "crema",
-    label: "Crema/Ungüento",
-    verb: "Aplicar",
-    unitSingular: "",
-    unitPlural: "",
-    needsQuantity: false,
-  },
-  {
-    value: "otro",
-    label: "Otro (instrucción libre)",
-    verb: "",
-    unitSingular: "",
-    unitPlural: "",
-    needsQuantity: false,
-  },
-];
-
-type MedicationRow = {
-  medicationName: string;
-  presentation: PresentationValue;
-  quantity: string;
-  customInstruction: string;
-  frequencyHours: string;
-  durationDays: string;
-};
-
-function formatDose(m: MedicationRow) {
-  const preset =
-    PRESENTATIONS.find((p) => p.value === m.presentation) ?? PRESENTATIONS[0];
-
-  if (m.presentation === "otro") {
-    return m.customInstruction.trim();
-  }
-  if (!preset.needsQuantity) {
-    return preset.verb;
-  }
-  const qty = m.quantity || "1";
-  const unit = Number(qty) === 1 ? preset.unitSingular : preset.unitPlural;
-  return `${preset.verb} ${qty} ${unit}`;
-}
-
-function emptyMedication(): MedicationRow {
-  return {
-    medicationName: "",
-    presentation: "tableta",
-    quantity: "",
-    customInstruction: "",
-    frequencyHours: "",
-    durationDays: "",
-  };
-}
+import { friendlyErrorMessage } from "@/lib/errors";
+import {
+  PRESENTATIONS,
+  emptyMedication,
+  type MedicationRow,
+} from "@/lib/prescription";
+import PrescriptionSheet from "./PrescriptionSheet";
+import PrintSettingsModal from "./PrintSettingsModal";
 
 export default function ConsultationForm({
   appointmentId,
@@ -125,9 +25,17 @@ export default function ConsultationForm({
   initialNotes,
   initialMedications,
   clinicName,
+  clinicAddress,
+  clinicPhone,
   patientName,
+  patientAge,
   doctorName,
-  date,
+  doctorSpecialty,
+  doctorUniversity,
+  doctorLicenseNumber,
+  doctorLogoUrl,
+  doctorWatermarkUrl,
+  pharmacyItems,
 }: {
   appointmentId: string;
   clinicId: string;
@@ -139,9 +47,21 @@ export default function ConsultationForm({
   initialNotes: string | null;
   initialMedications: MedicationRow[];
   clinicName: string;
+  clinicAddress: string | null;
+  clinicPhone: string | null;
   patientName: string;
+  patientAge: number | null;
   doctorName: string;
-  date: string;
+  doctorSpecialty: string | null;
+  doctorUniversity: string | null;
+  doctorLicenseNumber: string | null;
+  doctorLogoUrl: string | null;
+  doctorWatermarkUrl: string | null;
+  pharmacyItems: {
+    id: string;
+    name: string;
+    currentStockBoxes: number;
+  }[];
 }) {
   const router = useRouter();
   const supabase = createClient();
@@ -166,6 +86,11 @@ export default function ConsultationForm({
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [printCopy, setPrintCopy] = useState(false);
+  const [halfPage, setHalfPage] = useState(false);
+  const [printCopyFooter, setPrintCopyFooter] = useState(false);
+
   function updateMedication(
     index: number,
     field: keyof MedicationRow,
@@ -173,6 +98,33 @@ export default function ConsultationForm({
   ) {
     setMedications((rows) =>
       rows.map((row, i) => (i === index ? { ...row, [field]: value } : row))
+    );
+  }
+
+  // Escribir el nombre a mano desliga el medicamento del catálogo de
+  // farmacia (el vínculo solo se establece eligiendo del selector).
+  function updateMedicationName(index: number, value: string) {
+    setMedications((rows) =>
+      rows.map((row, i) =>
+        i === index
+          ? { ...row, medicationName: value, pharmacyItemId: null }
+          : row
+      )
+    );
+  }
+
+  function selectPharmacyItem(index: number, itemId: string) {
+    setMedications((rows) =>
+      rows.map((row, i) => {
+        if (i !== index) return row;
+        if (!itemId) return { ...row, pharmacyItemId: null };
+        const item = pharmacyItems.find((p) => p.id === itemId);
+        return {
+          ...row,
+          pharmacyItemId: itemId,
+          medicationName: item ? item.name : row.medicationName,
+        };
+      })
     );
   }
 
@@ -185,6 +137,13 @@ export default function ConsultationForm({
   }
 
   const validMedications = medications.filter((m) => m.medicationName.trim());
+  const today = format(new Date(), "d 'de' MMMM 'de' yyyy", { locale: es });
+  const vitals = [
+    temperature ? `Temp: ${temperature}°C` : null,
+    weight ? `Peso: ${weight}kg` : null,
+    height ? `Talla: ${height}cm` : null,
+    bloodPressure ? `T/A: ${bloodPressure}` : null,
+  ].filter((v): v is string => v !== null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -247,7 +206,12 @@ export default function ConsultationForm({
 
     if (upsertError) {
       setSaving(false);
-      setError(upsertError.message);
+      setError(
+        friendlyErrorMessage(
+          upsertError,
+          "No se pudieron guardar los signos vitales."
+        )
+      );
       return;
     }
 
@@ -261,7 +225,9 @@ export default function ConsultationForm({
 
       if (deleteError) {
         setSaving(false);
-        setError(deleteError.message);
+        setError(
+          friendlyErrorMessage(deleteError, "No se pudo guardar la receta.")
+        );
         return;
       }
 
@@ -278,12 +244,15 @@ export default function ConsultationForm({
               custom_instruction: m.customInstruction.trim() || null,
               frequency_hours: Number(m.frequencyHours),
               duration_days: Number(m.durationDays),
+              pharmacy_item_id: m.pharmacyItemId || null,
             }))
           );
 
         if (insertError) {
           setSaving(false);
-          setError(insertError.message);
+          setError(
+            friendlyErrorMessage(insertError, "No se pudo guardar la receta.")
+          );
           return;
         }
       }
@@ -297,7 +266,7 @@ export default function ConsultationForm({
   const vitalsAndNotes = (
     <form
       onSubmit={handleSubmit}
-      className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 text-sm"
+      className="print:hidden space-y-4 rounded-xl border border-slate-200 bg-white p-6 text-sm"
     >
       <h2 className="text-sm font-semibold text-slate-900">
         Signos vitales
@@ -387,11 +356,7 @@ export default function ConsultationForm({
                         placeholder="Medicamento"
                         value={m.medicationName}
                         onChange={(e) =>
-                          updateMedication(
-                            i,
-                            "medicationName",
-                            e.target.value
-                          )
+                          updateMedicationName(i, e.target.value)
                         }
                         className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
                       />
@@ -474,6 +439,27 @@ export default function ConsultationForm({
                         className="w-24 rounded-lg border border-slate-300 px-3 py-2 text-sm"
                       />
                     </div>
+
+                    {pharmacyItems.length > 0 && (
+                      <div className="mt-2">
+                        <select
+                          value={m.pharmacyItemId ?? ""}
+                          onChange={(e) =>
+                            selectPharmacyItem(i, e.target.value)
+                          }
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-500"
+                        >
+                          <option value="">De farmacia (opcional)</option>
+                          {pharmacyItems.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name} — {item.currentStockBoxes} caja
+                              {item.currentStockBoxes === 1 ? "" : "s"} en
+                              stock
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -506,46 +492,123 @@ export default function ConsultationForm({
     return vitalsAndNotes;
   }
 
+  // Cuando hay copia + media hoja, las dos hojas deben sumar como máximo
+  // una página física; se resta el alto de la línea divisoria (borde +
+  // margen) de cada mitad para que no se pase a una segunda hoja.
+  const sheetSizeClassName = halfPage
+    ? "print:min-h-[calc(50vh-10px)]"
+    : "print:min-h-screen";
+  const sharedSheetProps = {
+    doctorName,
+    doctorSpecialty,
+    doctorUniversity,
+    doctorLicenseNumber,
+    doctorLogoUrl,
+    doctorWatermarkUrl,
+    clinicName,
+    clinicAddress,
+    clinicPhone,
+    patientName,
+    patientAge,
+    today,
+    vitals,
+    medications: validMedications,
+  };
+
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-      {vitalsAndNotes}
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-8 print:block">
+      <div className="lg:col-span-3">{vitalsAndNotes}</div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm">
-        <div className="mb-4 border-b border-slate-200 pb-3 text-center">
-          <p className="font-semibold text-slate-900">{clinicName}</p>
-          <p className="text-xs text-slate-500">Receta médica</p>
+      <div className="flex flex-col lg:col-span-5">
+        <div className="print:hidden mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">Receta</h2>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-50 hover:text-brand-700"
+              aria-label="Ajustes de impresión"
+              title="Ajustes de impresión"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-5 w-5"
+              >
+                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-50 hover:text-brand-700"
+              aria-label="Imprimir receta"
+              title="Imprimir receta"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-5 w-5"
+              >
+                <path d="M6 9V2h12v7" />
+                <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                <rect x="6" y="14" width="12" height="8" />
+              </svg>
+            </button>
+          </div>
         </div>
 
-        <div className="mb-4 space-y-1 text-xs text-slate-600">
-          <p>
-            <span className="font-medium text-slate-700">Paciente:</span>{" "}
-            {patientName}
-          </p>
-          <p>
-            <span className="font-medium text-slate-700">Doctor:</span>{" "}
-            {doctorName}
-          </p>
-          <p>
-            <span className="font-medium text-slate-700">Fecha:</span> {date}
-          </p>
-        </div>
+        {/* Hoja original: siempre visible en pantalla, y siempre se imprime */}
+        <PrescriptionSheet
+          {...sharedSheetProps}
+          className={`flex flex-1 flex-col ${sheetSizeClassName}`}
+          footerLabel={
+            printCopy && printCopyFooter ? "Copia paciente" : undefined
+          }
+        />
 
-        <div className="space-y-2">
-          {validMedications.length === 0 ? (
-            <p className="text-slate-400">
-              Sin medicamentos agregados todavía.
-            </p>
-          ) : (
-            validMedications.map((m, i) => (
-              <p key={i} className="text-slate-700">
-                {i + 1}. <strong>{m.medicationName}</strong> —{" "}
-                {formatDose(m)} cada {m.frequencyHours} hrs por{" "}
-                {m.durationDays} {m.durationDays === "1" ? "día" : "días"}
-              </p>
-            ))
-          )}
-        </div>
+        {/* Hoja copia: nunca se ve en pantalla, solo aparece al imprimir */}
+        {printCopy && (
+          <>
+            {halfPage && (
+              <div
+                aria-hidden="true"
+                className="hidden print:block my-1 border-t-2 border-dashed border-slate-400"
+              />
+            )}
+            <PrescriptionSheet
+              {...sharedSheetProps}
+              className={`hidden print:flex print:flex-col ${sheetSizeClassName} ${
+                halfPage ? "" : "break-before-page"
+              }`}
+              footerLabel={printCopyFooter ? "Copia doctor" : undefined}
+            />
+          </>
+        )}
       </div>
+
+      {settingsOpen && (
+        <PrintSettingsModal
+          printCopy={printCopy}
+          onPrintCopyChange={setPrintCopy}
+          halfPage={halfPage}
+          onHalfPageChange={setHalfPage}
+          printCopyFooter={printCopyFooter}
+          onPrintCopyFooterChange={setPrintCopyFooter}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 }

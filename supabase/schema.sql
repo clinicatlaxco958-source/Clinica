@@ -49,6 +49,9 @@ create table users (
   -- función clínica (independiente del permiso de administrador, ver is_admin)
   role text check (role in ('doctor', 'receptionist')),
   is_admin boolean not null default false,
+  -- Permiso de administración de farmacia (mismo patrón que is_admin:
+  -- independiente de role, no se ata a "ser recepcionista").
+  is_pharmacy boolean not null default false,
   active boolean not null default true,
   phone text,
   created_at timestamptz not null default now()
@@ -69,6 +72,12 @@ create table doctors (
   -- Horario fijo por ahora (sin variar por día de la semana ni excepciones).
   work_start_time time,
   work_end_time time,
+  -- Datos para el encabezado de la receta impresa.
+  university text,
+  license_number text,
+  logo_url text,
+  -- Marca de agua de fondo de la receta impresa (mismo bucket que logo_url).
+  watermark_url text,
   created_at timestamptz not null default now(),
   constraint doctors_work_hours_check
     check (work_start_time is null or work_end_time is null or work_start_time < work_end_time)
@@ -151,6 +160,27 @@ create table consultations (
 );
 
 -- ------------------------------------------------------------
+-- Tabla: pharmacy_items (catálogo de medicamentos de farmacia interna,
+-- por clínica). El stock se lleva solo en cajas/paquetes cerrados, sin
+-- conversión a unidades individuales (tabletas/mL) — box_description es
+-- texto libre para anotar el contenido de la caja (ej. "Caja con 20
+-- tabletas 500mg"). El stock actual NO se guarda como columna aquí: se
+-- calcula sumando pharmacy_movements (entradas menos salidas) para que
+-- no haya un contador que se pueda desincronizar del historial real.
+-- ------------------------------------------------------------
+create table pharmacy_items (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references clinics(id) on delete cascade,
+  name text not null,
+  box_description text,
+  -- Descontinuar un medicamento no borra su historial de movimientos ni
+  -- el vínculo desde recetas pasadas (mismo espíritu que users.active).
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  unique (clinic_id, name)
+);
+
+-- ------------------------------------------------------------
 -- Tabla: prescription_items (medicamentos de la receta, 1:muchos con
 -- appointments). Solo el doctor de la cita (o admin) puede escribirla —
 -- a diferencia de consultations, recepción no prescribe.
@@ -169,10 +199,42 @@ create table prescription_items (
   custom_instruction text,
   frequency_hours integer not null check (frequency_hours > 0),
   duration_days integer not null check (duration_days > 0),
+  -- Vínculo opcional al catálogo de farmacia. medication_name sigue
+  -- siendo texto libre (el catálogo no es obligatorio); este campo solo
+  -- permite sugerir el medicamento con su stock al recetar y da
+  -- trazabilidad hacia pharmacy_movements cuando se dispensa.
+  pharmacy_item_id uuid references pharmacy_items(id) on delete set null,
   created_at timestamptz not null default now()
 );
 
 create index idx_prescription_items_appointment on prescription_items(appointment_id);
+
+-- ------------------------------------------------------------
+-- Tabla: pharmacy_movements (kardex — entradas y salidas de cajas de
+-- farmacia). Es la fuente de verdad del stock (ver pharmacy_items).
+-- Registro inmutable (sin políticas de update/delete más abajo):
+-- corregir un error se hace con un movimiento contrario, no editando el
+-- historial.
+-- ------------------------------------------------------------
+create table pharmacy_movements (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references clinics(id) on delete cascade,
+  item_id uuid not null references pharmacy_items(id) on delete cascade,
+  movement_type text not null check (movement_type in ('entrada', 'salida')),
+  quantity_boxes integer not null check (quantity_boxes > 0),
+  -- Paciente al que se le entregó (obligatorio a nivel app solo para
+  -- salidas; null en entradas).
+  patient_id uuid references patients(id) on delete set null,
+  -- Vínculo opcional de trazabilidad a la línea de receta que originó la
+  -- salida (dispensar es un paso aparte de recetar).
+  prescription_item_id uuid references prescription_items(id) on delete set null,
+  notes text,
+  created_by uuid not null references users(id),
+  created_at timestamptz not null default now()
+);
+
+create index idx_pharmacy_movements_item on pharmacy_movements(item_id);
+create index idx_pharmacy_movements_clinic on pharmacy_movements(clinic_id);
 
 -- Índices útiles para las consultas más comunes
 create index idx_appointments_clinic_date on appointments(clinic_id, date);
@@ -191,6 +253,8 @@ alter table patients enable row level security;
 alter table appointments enable row level security;
 alter table consultations enable row level security;
 alter table prescription_items enable row level security;
+alter table pharmacy_items enable row level security;
+alter table pharmacy_movements enable row level security;
 
 -- Función helper: obtiene el clinic_id del usuario autenticado actual.
 -- Un usuario suspendido (active=false) no resuelve clinic_id, así que
@@ -216,6 +280,20 @@ stable
 as $$
   select coalesce(
     (select is_admin from users where id = auth.uid() and active = true),
+    false
+  )
+$$;
+
+-- Función helper: ¿el usuario autenticado tiene permiso de farmacia?
+-- Calco de auth_is_admin() — permiso independiente, no ligado a role.
+create or replace function auth_is_pharmacy()
+returns boolean
+language sql
+security definer
+stable
+as $$
+  select coalesce(
+    (select is_pharmacy from users where id = auth.uid() and active = true),
     false
   )
 $$;
@@ -367,6 +445,62 @@ create policy "prescription_items delete" on prescription_items
         and (auth_is_admin() or a.doctor_id = auth_doctor_id())
     )
   );
+
+-- pharmacy_items: cualquiera con sesión en la clínica puede VER el
+-- catálogo/stock (un doctor necesita saber qué hay disponible al
+-- recetar); solo admin o quien tenga el permiso de farmacia puede
+-- crear/editar (descontinuar). Sin política de delete: un medicamento se
+-- descontinúa con active=false, no se borra (rompería la referencia
+-- desde movimientos/recetas pasadas).
+create policy "pharmacy_items select" on pharmacy_items
+  for select using (clinic_id = auth_clinic_id());
+create policy "pharmacy_items insert" on pharmacy_items
+  for insert with check (
+    clinic_id = auth_clinic_id() and (auth_is_admin() or auth_is_pharmacy())
+  );
+create policy "pharmacy_items update" on pharmacy_items
+  for update using (
+    clinic_id = auth_clinic_id() and (auth_is_admin() or auth_is_pharmacy())
+  );
+
+-- pharmacy_movements: mismo criterio de lectura amplia / escritura
+-- restringida a admin o permiso de farmacia. Sin políticas de
+-- update/delete — kardex inmutable (ver comentario en la tabla).
+create policy "pharmacy_movements select" on pharmacy_movements
+  for select using (clinic_id = auth_clinic_id());
+create policy "pharmacy_movements insert" on pharmacy_movements
+  for insert with check (
+    clinic_id = auth_clinic_id() and (auth_is_admin() or auth_is_pharmacy())
+  );
+
+-- ------------------------------------------------------------
+-- Storage: bucket para el logo del doctor (encabezado de receta impresa)
+-- ------------------------------------------------------------
+
+-- Bucket público (son solo imágenes de logo, sin datos sensibles) para
+-- que cada doctor suba su logo desde /dashboard/perfil.
+insert into storage.buckets (id, name, public)
+values ('doctor-logos', 'doctor-logos', true)
+on conflict (id) do nothing;
+
+-- Un doctor solo puede subir/editar/borrar objetos dentro de su propia
+-- carpeta (convención de path: `${auth.uid()}/logo.<ext>`).
+drop policy if exists "doctor manage own logo" on storage.objects;
+create policy "doctor manage own logo" on storage.objects
+  for all using (
+    bucket_id = 'doctor-logos'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  )
+  with check (
+    bucket_id = 'doctor-logos'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+-- Lectura pública (el bucket ya es público, pero se agrega la política
+-- explícita por si se consulta vía API en vez de la URL pública directa).
+drop policy if exists "public read doctor logos" on storage.objects;
+create policy "public read doctor logos" on storage.objects
+  for select using (bucket_id = 'doctor-logos');
 
 -- ============================================================
 -- Nota: cuando crees el primer usuario admin de una clínica,

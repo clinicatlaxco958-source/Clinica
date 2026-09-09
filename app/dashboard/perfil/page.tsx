@@ -25,7 +25,7 @@ export default async function PerfilPage() {
   const { data: doctor } = await supabase
     .from("doctors")
     .select(
-      "id, specialty, default_duration_minutes, work_start_time, work_end_time"
+      "id, specialty, default_duration_minutes, work_start_time, work_end_time, university, license_number, logo_url, watermark_url"
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -37,14 +37,39 @@ export default async function PerfilPage() {
     )
     .single();
 
-  return (
-    <div className="max-w-md space-y-6">
-      <div>
-        <h1 className="mb-6 text-lg font-semibold text-slate-900">
-          Mi perfil
-        </h1>
+  const roleLabel = profile.role
+    ? roleLabels[profile.role] ?? profile.role
+    : "—";
+  const clinicName = (profile.clinics as any)?.name ?? "—";
 
-        <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 text-sm">
+  return (
+    <div className="space-y-6">
+      <h1 className="text-lg font-semibold text-slate-900">Mi perfil</h1>
+
+      {doctor ? (
+        <DoctorSettingsForm
+          doctorId={doctor.id}
+          initialSpecialty={doctor.specialty}
+          initialDuration={doctor.default_duration_minutes}
+          initialWorkStart={doctor.work_start_time}
+          initialWorkEnd={doctor.work_end_time}
+          initialUniversity={doctor.university}
+          initialLicenseNumber={doctor.license_number}
+          initialLogoUrl={doctor.logo_url}
+          initialWatermarkUrl={doctor.watermark_url}
+          clinicDefaultDuration={
+            clinic?.default_appointment_duration_minutes ?? 30
+          }
+          clinicDefaultWorkStart={(clinic?.default_work_start_time ?? "09:00:00").slice(0, 5)}
+          clinicDefaultWorkEnd={(clinic?.default_work_end_time ?? "18:00:00").slice(0, 5)}
+          fullName={profile.full_name}
+          email={user.email ?? "—"}
+          clinicName={clinicName}
+          roleLabel={roleLabel}
+          isAdmin={profile.is_admin ?? false}
+        />
+      ) : (
+        <div className="max-w-md space-y-4 rounded-xl border border-slate-200 bg-white p-6 text-sm">
           <div>
             <p className="text-xs uppercase text-slate-400">Nombre</p>
             <p className="text-slate-700">{profile.full_name}</p>
@@ -55,15 +80,11 @@ export default async function PerfilPage() {
           </div>
           <div>
             <p className="text-xs uppercase text-slate-400">Clínica</p>
-            <p className="text-slate-700">
-              {(profile.clinics as any)?.name ?? "—"}
-            </p>
+            <p className="text-slate-700">{clinicName}</p>
           </div>
           <div>
             <p className="text-xs uppercase text-slate-400">Función</p>
-            <p className="text-slate-700">
-              {profile.role ? roleLabels[profile.role] ?? profile.role : "—"}
-            </p>
+            <p className="text-slate-700">{roleLabel}</p>
           </div>
           <div>
             <p className="text-xs uppercase text-slate-400">Permisos</p>
@@ -72,21 +93,6 @@ export default async function PerfilPage() {
             </p>
           </div>
         </div>
-      </div>
-
-      {doctor && (
-        <DoctorSettingsForm
-          doctorId={doctor.id}
-          initialSpecialty={doctor.specialty}
-          initialDuration={doctor.default_duration_minutes}
-          initialWorkStart={doctor.work_start_time}
-          initialWorkEnd={doctor.work_end_time}
-          clinicDefaultDuration={
-            clinic?.default_appointment_duration_minutes ?? 30
-          }
-          clinicDefaultWorkStart={(clinic?.default_work_start_time ?? "09:00:00").slice(0, 5)}
-          clinicDefaultWorkEnd={(clinic?.default_work_end_time ?? "18:00:00").slice(0, 5)}
-        />
       )}
     </div>
   );

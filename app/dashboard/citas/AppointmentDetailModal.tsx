@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { friendlyErrorMessage } from "@/lib/errors";
 
 const STATUS_ORDER = [
   "pendiente",
@@ -107,7 +108,12 @@ export default function AppointmentDetailModal({
     setShowStatusMenu(false);
 
     if (updateError) {
-      setError(updateError.message);
+      setError(
+        friendlyErrorMessage(
+          updateError,
+          "No se pudo actualizar el estado de la cita."
+        )
+      );
       return;
     }
 
@@ -128,7 +134,9 @@ export default function AppointmentDetailModal({
     setUpdating(false);
 
     if (updateError) {
-      setError(updateError.message);
+      setError(
+        friendlyErrorMessage(updateError, "No se pudo reasignar la cita.")
+      );
       return;
     }
 

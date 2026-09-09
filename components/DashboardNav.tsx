@@ -3,17 +3,26 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-export default function DashboardNav({ isAdmin }: { isAdmin: boolean }) {
+export default function DashboardNav({
+  isAdmin,
+  canAccessPharmacy,
+}: {
+  isAdmin: boolean;
+  canAccessPharmacy: boolean;
+}) {
   const pathname = usePathname();
 
   const links = [
-    { href: "/dashboard/citas", label: "Agenda" },
+    { href: "/dashboard/citas", label: "Inicio" },
     { href: "/dashboard/pacientes", label: "Pacientes" },
+    ...(canAccessPharmacy
+      ? [{ href: "/dashboard/farmacia", label: "Farmacia" }]
+      : []),
     ...(isAdmin ? [{ href: "/dashboard/usuarios", label: "Usuarios" }] : []),
   ];
 
   return (
-    <aside className="w-60 shrink-0 border-r border-slate-200 bg-white p-6">
+    <aside className="print:hidden w-60 shrink-0 border-r border-slate-200 bg-white p-6">
       <nav className="space-y-1">
         {links.map((link) => (
           <Link

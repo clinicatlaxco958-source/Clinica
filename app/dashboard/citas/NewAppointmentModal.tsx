@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { friendlyErrorMessage } from "@/lib/errors";
 
 type Doctor = {
   id: string;
@@ -330,7 +331,12 @@ export default function NewAppointmentModal({
     setSubmitting(false);
 
     if (insertError) {
-      setError(insertError.message);
+      setError(
+        friendlyErrorMessage(
+          insertError,
+          "No se pudo guardar la cita. Intenta de nuevo."
+        )
+      );
       return;
     }
 
@@ -356,7 +362,9 @@ export default function NewAppointmentModal({
 
     if (patientError || !created) {
       setSubmitting(false);
-      setError(patientError?.message ?? "No se pudo crear el paciente.");
+      setError(
+        friendlyErrorMessage(patientError, "No se pudo crear el paciente.")
+      );
       return;
     }
 

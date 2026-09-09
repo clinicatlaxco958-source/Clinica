@@ -4,11 +4,13 @@ import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { normalizeMxPhone } from "@/lib/phone";
+import { friendlyErrorMessage } from "@/lib/errors";
 
 type ActionResult =
   | { error: string }
   | { success: true }
-  | { tempPassword: string; email?: string };
+  | { tempPassword: string; email?: string; phone?: string };
 
 function generateTempPassword() {
   return randomUUID().replace(/-/g, "").slice(0, 12);
@@ -41,6 +43,7 @@ export async function createStaffUser(
   const { clinicId } = await requireAdmin();
 
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const phoneRaw = String(formData.get("phone") ?? "").trim();
   const fullName = String(formData.get("full_name") ?? "").trim();
   const role = (String(formData.get("role") ?? "") || null) as
     | "doctor"
@@ -50,9 +53,22 @@ export async function createStaffUser(
   const durationRaw = String(formData.get("duration_minutes") ?? "").trim();
   const durationMinutes = durationRaw ? Number(durationRaw) : null;
   const isAdmin = formData.get("is_admin") === "on";
+  const isPharmacy = formData.get("is_pharmacy") === "on";
 
-  if (!email || !fullName) {
-    return { error: "Correo y nombre son obligatorios." };
+  if (!fullName) {
+    return { error: "El nombre es obligatorio." };
+  }
+
+  if (!email && !phoneRaw) {
+    return { error: "Captura correo o teléfono (al menos uno)." };
+  }
+
+  let phone: string | null = null;
+  if (phoneRaw) {
+    phone = normalizeMxPhone(phoneRaw);
+    if (!phone) {
+      return { error: "El teléfono debe tener 10 dígitos (México)." };
+    }
   }
 
   if (durationRaw && (!Number.isInteger(durationMinutes) || (durationMinutes as number) <= 0)) {
@@ -64,14 +80,25 @@ export async function createStaffUser(
 
   const { data: created, error: createError } =
     await admin.auth.admin.createUser({
-      email,
+      email: email || undefined,
+      phone: phone || undefined,
       password: tempPassword,
-      email_confirm: true,
+      email_confirm: !!email,
+      // Sin envío de OTP todavía (sin proveedor de SMS/WhatsApp
+      // configurado) — se confía el número tal cual, solo validado en
+      // formato. Cuando haya presupuesto para un proveedor, este flag
+      // pasa a depender de la verificación real.
+      phone_confirm: !!phone,
       user_metadata: { must_change_password: true },
     });
 
   if (createError || !created.user) {
-    return { error: createError?.message ?? "No se pudo crear el usuario." };
+    const message = createError?.message ?? "";
+    return {
+      error: message.toLowerCase().includes("already")
+        ? "Ya existe un usuario con ese correo o teléfono."
+        : "No se pudo crear el usuario. Intenta de nuevo.",
+    };
   }
 
   const { error: insertError } = await admin.from("users").insert({
@@ -80,11 +107,17 @@ export async function createStaffUser(
     full_name: fullName,
     role,
     is_admin: isAdmin,
+    is_pharmacy: isPharmacy,
   });
 
   if (insertError) {
     await admin.auth.admin.deleteUser(created.user.id);
-    return { error: insertError.message };
+    return {
+      error: friendlyErrorMessage(
+        insertError,
+        "No se pudo crear el usuario. Intenta de nuevo."
+      ),
+    };
   }
 
   if (role === "doctor") {
@@ -97,7 +130,7 @@ export async function createStaffUser(
   }
 
   revalidatePath("/dashboard/usuarios");
-  return { tempPassword, email };
+  return { tempPassword, email: email || undefined, phone: phone || undefined };
 }
 
 export async function setUserActive(
@@ -112,7 +145,14 @@ export async function setUserActive(
     .update({ active })
     .eq("id", userId);
 
-  if (error) return { error: error.message };
+  if (error) {
+    return {
+      error: friendlyErrorMessage(
+        error,
+        "No se pudo actualizar el usuario. Intenta de nuevo."
+      ),
+    };
+  }
 
   revalidatePath("/dashboard/usuarios");
   return { success: true };
@@ -123,7 +163,9 @@ export async function deleteStaffUser(userId: string): Promise<ActionResult> {
   const admin = createAdminClient();
 
   const { error } = await admin.auth.admin.deleteUser(userId);
-  if (error) return { error: error.message };
+  if (error) {
+    return { error: "No se pudo eliminar el usuario. Intenta de nuevo." };
+  }
 
   revalidatePath("/dashboard/usuarios");
   return { success: true };
@@ -141,7 +183,11 @@ export async function resetStaffPassword(
     user_metadata: { must_change_password: true },
   });
 
-  if (error) return { error: error.message };
+  if (error) {
+    return {
+      error: "No se pudo restablecer la contraseña. Intenta de nuevo.",
+    };
+  }
 
   return { tempPassword };
 }

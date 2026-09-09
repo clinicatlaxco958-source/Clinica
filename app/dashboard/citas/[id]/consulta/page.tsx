@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
+import { differenceInYears, parseISO } from "date-fns";
 import { createClient } from "@/lib/supabase/server";
 import ConsultationForm from "./ConsultationForm";
 import PatientInfoCard from "./PatientInfoCard";
@@ -25,13 +26,13 @@ export default async function ConsultaPage({
 
   const { data: clinic } = await supabase
     .from("clinics")
-    .select("name")
+    .select("name, phone, address")
     .single();
 
   const { data: appointment } = await supabase
     .from("appointments")
     .select(
-      "id, date, start_time, end_time, doctor_id, patients(id, full_name, birth_date, phone, email), doctors(users(full_name))"
+      "id, date, start_time, end_time, doctor_id, patients(id, full_name, birth_date, phone, email), doctors(specialty, university, license_number, logo_url, watermark_url, users(full_name))"
     )
     .eq("id", params.id)
     .maybeSingle();
@@ -58,41 +59,72 @@ export default async function ConsultaPage({
   const { data: medications } = await supabase
     .from("prescription_items")
     .select(
-      "id, medication_name, presentation, quantity, custom_instruction, frequency_hours, duration_days"
+      "id, medication_name, presentation, quantity, custom_instruction, frequency_hours, duration_days, pharmacy_item_id"
     )
     .eq("appointment_id", appointment.id)
     .order("created_at");
 
+  const { data: pharmacyItemRows } = await supabase
+    .from("pharmacy_items")
+    .select("id, name")
+    .eq("clinic_id", profile.clinic_id)
+    .eq("active", true)
+    .order("name");
+
+  const { data: pharmacyMovementRows } = await supabase
+    .from("pharmacy_movements")
+    .select("item_id, movement_type, quantity_boxes")
+    .eq("clinic_id", profile.clinic_id);
+
+  const stockByItem = new Map<string, number>();
+  for (const mv of pharmacyMovementRows ?? []) {
+    const delta = mv.movement_type === "entrada" ? mv.quantity_boxes : -mv.quantity_boxes;
+    stockByItem.set(mv.item_id, (stockByItem.get(mv.item_id) ?? 0) + delta);
+  }
+  const pharmacyItems = (pharmacyItemRows ?? []).map((item) => ({
+    id: item.id,
+    name: item.name,
+    currentStockBoxes: stockByItem.get(item.id) ?? 0,
+  }));
+
   const patient = appointment.patients as any;
-  const doctorName = (appointment.doctors as any)?.users?.full_name ?? null;
+  const doctor = appointment.doctors as any;
+  const doctorName = doctor?.users?.full_name ?? null;
+  const patientAge = patient?.birth_date
+    ? differenceInYears(new Date(), parseISO(patient.birth_date))
+    : null;
 
   return (
-    <div className={isOwnAppointment ? "max-w-5xl" : "max-w-lg"}>
+    <div className={isOwnAppointment ? undefined : "max-w-lg"}>
       <Link
         href="/dashboard/citas"
-        className="mb-4 inline-block text-sm text-slate-500 hover:text-slate-700"
+        className="print:hidden mb-4 inline-block text-sm text-slate-500 hover:text-slate-700"
       >
         ← Volver a la agenda
       </Link>
 
-      <h1 className="mb-1 text-lg font-semibold text-slate-900">
-        {isOwnAppointment ? "Consulta" : "Signos vitales"}
-      </h1>
-      <p className="mb-6 text-sm text-slate-500">
-        {appointment.date} · {appointment.start_time?.slice(0, 5)}–
-        {appointment.end_time?.slice(0, 5)}
-        {doctorName ? ` · ${doctorName}` : ""}
-      </p>
+      <div className="print:hidden">
+        <h1 className="mb-1 text-lg font-semibold text-slate-900">
+          {isOwnAppointment ? "Consulta" : "Signos vitales"}
+        </h1>
+        <p className="mb-6 text-sm text-slate-500">
+          {appointment.date} · {appointment.start_time?.slice(0, 5)}–
+          {appointment.end_time?.slice(0, 5)}
+          {doctorName ? ` · ${doctorName}` : ""}
+        </p>
+      </div>
 
-      <PatientInfoCard
-        patient={{
-          id: patient?.id,
-          fullName: patient?.full_name ?? "Paciente",
-          birthDate: patient?.birth_date,
-          phone: patient?.phone ?? null,
-          email: patient?.email ?? null,
-        }}
-      />
+      <div className="print:hidden">
+        <PatientInfoCard
+          patient={{
+            id: patient?.id,
+            fullName: patient?.full_name ?? "Paciente",
+            birthDate: patient?.birth_date,
+            phone: patient?.phone ?? null,
+            email: patient?.email ?? null,
+          }}
+        />
+      </div>
 
       <ConsultationForm
         appointmentId={appointment.id}
@@ -110,11 +142,20 @@ export default async function ConsultaPage({
           customInstruction: m.custom_instruction ?? "",
           frequencyHours: String(m.frequency_hours),
           durationDays: String(m.duration_days),
+          pharmacyItemId: m.pharmacy_item_id ?? null,
         }))}
+        pharmacyItems={pharmacyItems}
         clinicName={clinic?.name ?? "Clínica"}
+        clinicAddress={clinic?.address ?? null}
+        clinicPhone={clinic?.phone ?? null}
         patientName={patient?.full_name ?? "Paciente"}
+        patientAge={patientAge}
         doctorName={doctorName ?? "—"}
-        date={appointment.date}
+        doctorSpecialty={doctor?.specialty ?? null}
+        doctorUniversity={doctor?.university ?? null}
+        doctorLicenseNumber={doctor?.license_number ?? null}
+        doctorLogoUrl={doctor?.logo_url ?? null}
+        doctorWatermarkUrl={doctor?.watermark_url ?? null}
       />
     </div>
   );
