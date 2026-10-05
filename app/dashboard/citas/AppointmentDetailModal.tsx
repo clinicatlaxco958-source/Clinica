@@ -8,6 +8,7 @@ import { friendlyErrorMessage } from "@/lib/errors";
 const STATUS_ORDER = [
   "pendiente",
   "confirmada",
+  "consultando",
   "completada",
   "cancelada",
   "no_show",
@@ -16,6 +17,7 @@ const STATUS_ORDER = [
 const statusLabels: Record<string, string> = {
   pendiente: "Pendiente",
   confirmada: "Confirmada",
+  consultando: "En consulta",
   completada: "Completada",
   cancelada: "Cancelada",
   no_show: "No asistió",
@@ -24,6 +26,7 @@ const statusLabels: Record<string, string> = {
 const statusColors: Record<string, string> = {
   pendiente: "bg-amber-100 text-amber-700",
   confirmada: "bg-blue-100 text-blue-700",
+  consultando: "bg-purple-100 text-purple-700",
   completada: "bg-green-100 text-green-700",
   cancelada: "bg-slate-100 text-slate-500",
   no_show: "bg-red-100 text-red-700",
@@ -146,6 +149,21 @@ export default function AppointmentDetailModal({
 
   const isOwnAppointment =
     currentUserDoctorId != null && appointment.doctorId === currentUserDoctorId;
+
+  // El doctor dueño de la cita marca "consultando" al entrar a atenderla
+  // (no aplica a recepción capturando signos vitales). No se toca si ya
+  // estaba completada, para no revertir una consulta ya cerrada solo por
+  // volver a abrirla para editar algo.
+  async function handleStartConsultation() {
+    if (!appointment) return;
+    if (isOwnAppointment && appointment.status !== "completada") {
+      await supabase
+        .from("appointments")
+        .update({ status: "consultando" })
+        .eq("id", appointment.id);
+    }
+    router.push(`/dashboard/citas/${appointment.id}/consulta`);
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
@@ -292,7 +310,7 @@ export default function AppointmentDetailModal({
 
         <button
           type="button"
-          onClick={() => router.push(`/dashboard/citas/${appointment.id}/consulta`)}
+          onClick={handleStartConsultation}
           className="mt-5 w-full rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
         >
           {isOwnAppointment

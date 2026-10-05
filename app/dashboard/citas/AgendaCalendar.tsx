@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Calendar,
   dateFnsLocalizer,
@@ -18,10 +19,12 @@ import {
   endOfWeek,
   startOfDay,
   endOfDay,
+  isSameDay,
 } from "date-fns";
 import { es } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import { createClient } from "@/lib/supabase/client";
+import { specialtyLabel } from "@/lib/specialties";
 import NewAppointmentModal, {
   type NewAppointmentDefaults,
 } from "./NewAppointmentModal";
@@ -56,6 +59,7 @@ const messages = {
 const statusColors: Record<string, string> = {
   pendiente: "#d97706",
   confirmada: "#2563eb",
+  consultando: "#9333ea",
   completada: "#16a34a",
   cancelada: "#94a3b8",
   no_show: "#dc2626",
@@ -87,6 +91,94 @@ type AppointmentEvent = {
   notes: string | null;
   hasVitals: boolean;
 };
+
+// Select compartido entre la carga masiva y el refetch puntual de una sola
+// cita (Realtime): mismas columnas/joins para que `mapAppointmentRow` sirva
+// para ambos casos.
+const APPOINTMENT_SELECT =
+  "id, date, start_time, end_time, status, payment_status, notes, doctor_id, patients(full_name, phone, email), doctors(specialty, users(full_name)), consultations(weight_kg, height_cm, temperature_c, blood_pressure)";
+
+function mapAppointmentRow(apt: any): AppointmentEvent {
+  const c = apt.consultations;
+  const hasVitals = !!(
+    c &&
+    (c.weight_kg != null ||
+      c.height_cm != null ||
+      c.temperature_c != null ||
+      (c.blood_pressure && c.blood_pressure.trim() !== ""))
+  );
+  return {
+    id: apt.id,
+    title: apt.patients?.full_name ?? "Paciente",
+    start: parse(
+      `${apt.date} ${apt.start_time.slice(0, 5)}`,
+      "yyyy-MM-dd HH:mm",
+      new Date()
+    ),
+    end: parse(
+      `${apt.date} ${apt.end_time.slice(0, 5)}`,
+      "yyyy-MM-dd HH:mm",
+      new Date()
+    ),
+    status: apt.status,
+    paymentStatus: apt.payment_status,
+    doctorId: apt.doctor_id,
+    doctorName: apt.doctors?.users?.full_name ?? null,
+    patientPhone: apt.patients?.phone ?? null,
+    patientEmail: apt.patients?.email ?? null,
+    dateStr: apt.date,
+    startTimeStr: apt.start_time.slice(0, 5),
+    endTimeStr: apt.end_time.slice(0, 5),
+    notes: apt.notes,
+    hasVitals,
+  };
+}
+
+// Contenido de cada bloque de cita en el calendario. El ícono de signos
+// vitales solo aparece si aún no se han capturado — es una acción a
+// realizar, no un indicador de "ya hecho", y navega directo a la pantalla
+// de signos vitales sin pasar por el modal de detalle ni tocar el status
+// de la cita.
+function AgendaEvent({
+  event,
+  showVitalsAction,
+}: {
+  event: AppointmentEvent;
+  showVitalsAction: boolean;
+}) {
+  const router = useRouter();
+
+  return (
+    <div className="flex h-full items-center justify-between gap-1 overflow-hidden">
+      <span className="truncate">{event.title}</span>
+      {showVitalsAction && !event.hasVitals && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            router.push(`/dashboard/citas/${event.id}/consulta`);
+          }}
+          title="Tomar signos vitales"
+          aria-label="Tomar signos vitales"
+          className="shrink-0 rounded p-0.5 hover:bg-white/25"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-3.5 w-3.5"
+          >
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
 
 function timeToDateOnDay(day: Date, timeStr: string) {
   const [h, m] = timeStr.split(":").map(Number);
@@ -128,7 +220,11 @@ export default function AgendaCalendar({
   defaultDoctorId: string | null;
   canViewAllDoctors: boolean;
 }) {
-  const supabase = createClient();
+  // Memoizado: createClient() regresa una instancia nueva cada llamada, y
+  // esta se usa como dependencia de efectos (carga + Realtime) — sin
+  // memoizar, esos efectos se re-dispararían en cada render en vez de solo
+  // cuando cambia lo que realmente les importa.
+  const supabase = useMemo(() => createClient(), []);
   const [date, setDate] = useState(new Date());
   const [view, setView] = useState<View>(Views.DAY);
   const [doctorFilter, setDoctorFilter] = useState(defaultDoctorId ?? "all");
@@ -170,9 +266,7 @@ export default function AgendaCalendar({
 
       let query = supabase
         .from("appointments")
-        .select(
-          "id, date, start_time, end_time, status, payment_status, notes, doctor_id, patients(full_name, phone, email), doctors(specialty, users(full_name)), consultations(weight_kg, height_cm, temperature_c, blood_pressure)"
-        )
+        .select(APPOINTMENT_SELECT)
         .gte("date", format(rangeStart, "yyyy-MM-dd"))
         .lte("date", format(rangeEnd, "yyyy-MM-dd"))
         .order("start_time");
@@ -184,43 +278,7 @@ export default function AgendaCalendar({
       const { data } = await query;
       if (cancelled) return;
 
-      const mapped: AppointmentEvent[] = (data ?? []).map((apt: any) => {
-        const c = apt.consultations;
-        const hasVitals = !!(
-          c &&
-          (c.weight_kg != null ||
-            c.height_cm != null ||
-            c.temperature_c != null ||
-            (c.blood_pressure && c.blood_pressure.trim() !== ""))
-        );
-        return {
-        id: apt.id,
-        title: apt.patients?.full_name ?? "Paciente",
-        start: parse(
-          `${apt.date} ${apt.start_time.slice(0, 5)}`,
-          "yyyy-MM-dd HH:mm",
-          new Date()
-        ),
-        end: parse(
-          `${apt.date} ${apt.end_time.slice(0, 5)}`,
-          "yyyy-MM-dd HH:mm",
-          new Date()
-        ),
-        status: apt.status,
-        paymentStatus: apt.payment_status,
-        doctorId: apt.doctor_id,
-        doctorName: apt.doctors?.users?.full_name ?? null,
-        patientPhone: apt.patients?.phone ?? null,
-        patientEmail: apt.patients?.email ?? null,
-        dateStr: apt.date,
-        startTimeStr: apt.start_time.slice(0, 5),
-        endTimeStr: apt.end_time.slice(0, 5),
-        notes: apt.notes,
-        hasVitals,
-        };
-      });
-
-      setEvents(mapped);
+      setEvents((data ?? []).map(mapAppointmentRow));
       setLoading(false);
     }
 
@@ -229,6 +287,76 @@ export default function AgendaCalendar({
       cancelled = true;
     };
   }, [rangeStart, rangeEnd, doctorFilter, refreshKey, supabase]);
+
+  // El filtro visible cambia seguido (navegar de día, cambiar de doctor),
+  // pero no queremos recrear el socket de Realtime cada vez — el
+  // suscriptor vive mientras la clínica no cambie, y consulta este ref
+  // para saber si un cambio aplica a lo que se está viendo ahora mismo.
+  const visibleFilterRef = useRef({ startStr: "", endStr: "", doctorFilter });
+  useEffect(() => {
+    visibleFilterRef.current = {
+      startStr: format(rangeStart, "yyyy-MM-dd"),
+      endStr: format(rangeEnd, "yyyy-MM-dd"),
+      doctorFilter,
+    };
+  }, [rangeStart, rangeEnd, doctorFilter]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`appointments-${clinicId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "appointments",
+          filter: `clinic_id=eq.${clinicId}`,
+        },
+        async (payload: any) => {
+          if (payload.eventType === "DELETE") {
+            const deletedId = payload.old?.id;
+            setEvents((prev) => prev.filter((e) => e.id !== deletedId));
+            return;
+          }
+
+          const row = payload.new as { id: string; date: string; doctor_id: string | null };
+          const { startStr, endStr, doctorFilter: currentDoctorFilter } =
+            visibleFilterRef.current;
+          const matches =
+            row.date >= startStr &&
+            row.date <= endStr &&
+            (currentDoctorFilter === "all" || row.doctor_id === currentDoctorFilter);
+
+          if (!matches) {
+            // Ya no aplica a lo que se está viendo (se reasignó a otro
+            // doctor, o se movió fuera del rango de fechas) — se quita si
+            // estaba en la lista.
+            setEvents((prev) => prev.filter((e) => e.id !== row.id));
+            return;
+          }
+
+          const { data } = await supabase
+            .from("appointments")
+            .select(APPOINTMENT_SELECT)
+            .eq("id", row.id)
+            .maybeSingle();
+
+          if (!data) return;
+          const mapped = mapAppointmentRow(data);
+
+          setEvents((prev) =>
+            prev.some((e) => e.id === mapped.id)
+              ? prev.map((e) => (e.id === mapped.id ? mapped : e))
+              : [...prev, mapped]
+          );
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [clinicId, supabase]);
 
   const eventPropGetter = useCallback(
     (event: AppointmentEvent) => ({
@@ -240,6 +368,19 @@ export default function AgendaCalendar({
       },
     }),
     []
+  );
+
+  // El acceso rápido a "tomar signos vitales" solo tiene sentido viendo el
+  // día de hoy — para otros días/vistas no hay una acción inmediata que
+  // tomar todavía.
+  const showVitalsAction = view === Views.DAY && isSameDay(date, new Date());
+  const calendarComponents = useMemo(
+    () => ({
+      event: (props: { event: AppointmentEvent }) => (
+        <AgendaEvent {...props} showVitalsAction={showVitalsAction} />
+      ),
+    }),
+    [showVitalsAction]
   );
 
   const handleSelectSlot = useCallback(
@@ -301,7 +442,7 @@ export default function AgendaCalendar({
             {doctors.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.fullName}
-                {d.specialty ? ` (${d.specialty})` : ""}
+                {d.specialty ? ` (${specialtyLabel(d.specialty)})` : ""}
               </option>
             ))}
           </select>
@@ -331,6 +472,7 @@ export default function AgendaCalendar({
           onView={setView}
           views={[Views.MONTH, Views.WEEK, Views.DAY]}
           eventPropGetter={eventPropGetter}
+          components={calendarComponents}
           selectable
           popup
           onSelectSlot={handleSelectSlot}
