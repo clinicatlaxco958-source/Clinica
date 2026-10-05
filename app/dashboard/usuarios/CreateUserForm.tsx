@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { createStaffUser } from "./actions";
+import { SPECIALTIES } from "@/lib/specialties";
 
 export default function CreateUserForm() {
   const [open, setOpen] = useState(false);
@@ -142,6 +143,7 @@ export default function CreateUserForm() {
                       >
                         <option value="">Sin función clínica (staff)</option>
                         <option value="doctor">Doctor</option>
+                        <option value="nurse">Enfermería</option>
                         <option value="receptionist">Recepcionista</option>
                       </select>
                     </div>
@@ -151,10 +153,18 @@ export default function CreateUserForm() {
                           <label className="mb-1 block text-sm font-medium text-slate-700">
                             Especialidad (opcional)
                           </label>
-                          <input
+                          <select
                             name="specialty"
+                            defaultValue=""
                             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          />
+                          >
+                            <option value="">Sin especificar</option>
+                            {SPECIALTIES.map((s) => (
+                              <option key={s.value} value={s.value}>
+                                {s.label}
+                              </option>
+                            ))}
+                          </select>
                         </div>
                         <div>
                           <label className="mb-1 block text-sm font-medium text-slate-700">

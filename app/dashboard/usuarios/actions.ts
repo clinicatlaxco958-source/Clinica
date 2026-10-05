@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { normalizeMxPhone } from "@/lib/phone";
 import { friendlyErrorMessage } from "@/lib/errors";
+import { SPECIALTIES } from "@/lib/specialties";
 
 type ActionResult =
   | { error: string }
@@ -48,8 +49,12 @@ export async function createStaffUser(
   const role = (String(formData.get("role") ?? "") || null) as
     | "doctor"
     | "receptionist"
+    | "nurse"
     | null;
   const specialty = String(formData.get("specialty") ?? "").trim() || null;
+  if (specialty && !SPECIALTIES.some((s) => s.value === specialty)) {
+    return { error: "Especialidad inválida." };
+  }
   const durationRaw = String(formData.get("duration_minutes") ?? "").trim();
   const durationMinutes = durationRaw ? Number(durationRaw) : null;
   const isAdmin = formData.get("is_admin") === "on";

@@ -18,10 +18,15 @@ export default function ConsultationForm({
   appointmentId,
   clinicId,
   canEditNotes,
+  appointmentDate,
+  appointmentStartTime,
+  appointmentEndTime,
   initialWeightKg,
   initialHeightCm,
   initialTemperatureC,
   initialBloodPressure,
+  initialHeartRateBpm,
+  initialRespiratoryRateRpm,
   initialNotes,
   initialMedications,
   clinicName,
@@ -36,14 +41,23 @@ export default function ConsultationForm({
   doctorLogoUrl,
   doctorWatermarkUrl,
   pharmacyItems,
+  lastUpdatedByName,
+  lastUpdatedAt,
+  historyComplete,
+  onIncompleteHistory,
 }: {
   appointmentId: string;
   clinicId: string;
   canEditNotes: boolean;
+  appointmentDate: string;
+  appointmentStartTime: string;
+  appointmentEndTime: string;
   initialWeightKg: number | null;
   initialHeightCm: number | null;
   initialTemperatureC: number | null;
   initialBloodPressure: string | null;
+  initialHeartRateBpm: number | null;
+  initialRespiratoryRateRpm: number | null;
   initialNotes: string | null;
   initialMedications: MedicationRow[];
   clinicName: string;
@@ -62,6 +76,10 @@ export default function ConsultationForm({
     name: string;
     currentStockBoxes: number;
   }[];
+  lastUpdatedByName: string | null;
+  lastUpdatedAt: string | null;
+  historyComplete: boolean;
+  onIncompleteHistory?: () => void;
 }) {
   const router = useRouter();
   const supabase = createClient();
@@ -78,13 +96,21 @@ export default function ConsultationForm({
   const [bloodPressure, setBloodPressure] = useState(
     initialBloodPressure ?? ""
   );
+  const [heartRate, setHeartRate] = useState(
+    initialHeartRateBpm != null ? String(initialHeartRateBpm) : ""
+  );
+  const [respiratoryRate, setRespiratoryRate] = useState(
+    initialRespiratoryRateRpm != null ? String(initialRespiratoryRateRpm) : ""
+  );
   const [notes, setNotes] = useState(initialNotes ?? "");
   const [medications, setMedications] = useState<MedicationRow[]>(
     initialMedications.length > 0 ? initialMedications : [emptyMedication()]
   );
   const [saving, setSaving] = useState(false);
+  const [finishing, setFinishing] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const busy = saving || finishing;
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [printCopy, setPrintCopy] = useState(false);
@@ -143,13 +169,16 @@ export default function ConsultationForm({
     weight ? `Peso: ${weight}kg` : null,
     height ? `Talla: ${height}cm` : null,
     bloodPressure ? `T/A: ${bloodPressure}` : null,
+    heartRate ? `FC: ${heartRate}lpm` : null,
+    respiratoryRate ? `FR: ${respiratoryRate}rpm` : null,
   ].filter((v): v is string => v !== null);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
+  // Guarda signos vitales, notas y receta. Devuelve false (y ya dejó el
+  // mensaje en `error`) si algo falló, para que el llamador decida qué
+  // hacer después — "Guardar" se queda en la pantalla, "Terminar consulta"
+  // no avanza a cambiar el status ni a navegar si esto falla.
+  async function persistConsultation(): Promise<boolean> {
     setError(null);
-    setSaved(false);
 
     for (const m of medications) {
       const hasAny =
@@ -161,30 +190,30 @@ export default function ConsultationForm({
       if (!hasAny) continue;
 
       if (!m.medicationName.trim() || !m.frequencyHours || !m.durationDays) {
-        setSaving(false);
         setError(
           "Completa nombre, frecuencia y días de cada medicamento (o bórralo)."
         );
-        return;
+        return false;
       }
 
       const preset = PRESENTATIONS.find((p) => p.value === m.presentation);
       if (m.presentation === "otro" && !m.customInstruction.trim()) {
-        setSaving(false);
         setError(
           "Escribe la instrucción de dosis para el medicamento marcado como 'Otro'."
         );
-        return;
+        return false;
       }
       if (preset?.needsQuantity && !m.quantity) {
-        setSaving(false);
         setError(
           `Indica la cantidad de "${m.medicationName}" (ej. cuántas tabletas/mL/gotas).`
         );
-        return;
+        return false;
       }
     }
 
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     const payload: Record<string, unknown> = {
       appointment_id: appointmentId,
       clinic_id: clinicId,
@@ -192,7 +221,10 @@ export default function ConsultationForm({
       height_cm: height ? Number(height) : null,
       temperature_c: temperature ? Number(temperature) : null,
       blood_pressure: bloodPressure.trim() || null,
+      heart_rate_bpm: heartRate ? Number(heartRate) : null,
+      respiratory_rate_rpm: respiratoryRate ? Number(respiratoryRate) : null,
       updated_at: new Date().toISOString(),
+      updated_by: user?.id ?? null,
     };
     // Quien no es el doctor de la cita no envía `notes`, así nunca borra
     // ni sobrescribe las notas clínicas del doctor.
@@ -205,14 +237,13 @@ export default function ConsultationForm({
       .upsert(payload, { onConflict: "appointment_id" });
 
     if (upsertError) {
-      setSaving(false);
       setError(
         friendlyErrorMessage(
           upsertError,
           "No se pudieron guardar los signos vitales."
         )
       );
-      return;
+      return false;
     }
 
     if (canEditNotes) {
@@ -224,11 +255,10 @@ export default function ConsultationForm({
         .eq("appointment_id", appointmentId);
 
       if (deleteError) {
-        setSaving(false);
         setError(
           friendlyErrorMessage(deleteError, "No se pudo guardar la receta.")
         );
-        return;
+        return false;
       }
 
       if (validMedications.length > 0) {
@@ -249,18 +279,70 @@ export default function ConsultationForm({
           );
 
         if (insertError) {
-          setSaving(false);
           setError(
             friendlyErrorMessage(insertError, "No se pudo guardar la receta.")
           );
-          return;
+          return false;
         }
       }
     }
 
+    return true;
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setSaved(false);
+
+    const ok = await persistConsultation();
+
     setSaving(false);
-    setSaved(true);
-    router.refresh();
+    if (ok) {
+      setSaved(true);
+      router.refresh();
+    }
+  }
+
+  async function handleFinish() {
+    // La consulta no se puede dar por terminada mientras falte historia
+    // clínica obligatoria (NOM-004) — ver NEGOCIO.md sección 13. El
+    // modal de MedicalHistorySection se puede cerrar para revisar otra
+    // cosa en pantalla, pero no se puede cerrar la cita sin eso.
+    if (!historyComplete) {
+      setError(
+        "No puedes terminar la consulta: falta completar la historia clínica del paciente."
+      );
+      onIncompleteHistory?.();
+      return;
+    }
+
+    setFinishing(true);
+    setSaved(false);
+
+    const ok = await persistConsultation();
+    if (!ok) {
+      setFinishing(false);
+      return;
+    }
+
+    const { error: statusError } = await supabase
+      .from("appointments")
+      .update({ status: "completada" })
+      .eq("id", appointmentId);
+
+    if (statusError) {
+      setFinishing(false);
+      setError(
+        friendlyErrorMessage(
+          statusError,
+          "Se guardó la consulta, pero no se pudo marcar como completada."
+        )
+      );
+      return;
+    }
+
+    router.push("/dashboard/citas");
   }
 
   const vitalsAndNotes = (
@@ -268,9 +350,17 @@ export default function ConsultationForm({
       onSubmit={handleSubmit}
       className="print:hidden space-y-4 rounded-xl border border-slate-200 bg-white p-6 text-sm"
     >
-      <h2 className="text-sm font-semibold text-slate-900">
-        Signos vitales
-      </h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-slate-900">
+          Signos vitales
+        </h2>
+        {lastUpdatedByName && lastUpdatedAt && (
+          <p className="text-xs text-slate-400">
+            Última edición: {format(new Date(lastUpdatedAt), "d/MM/yyyy HH:mm")}{" "}
+            por {lastUpdatedByName}
+          </p>
+        )}
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -317,6 +407,32 @@ export default function ConsultationForm({
             placeholder="120/80"
             value={bloodPressure}
             onChange={(e) => setBloodPressure(e.target.value)}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500">
+            Frecuencia cardiaca (lpm)
+          </label>
+          <input
+            type="number"
+            step="1"
+            min={0}
+            value={heartRate}
+            onChange={(e) => setHeartRate(e.target.value)}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500">
+            Frecuencia respiratoria (rpm)
+          </label>
+          <input
+            type="number"
+            step="1"
+            min={0}
+            value={respiratoryRate}
+            onChange={(e) => setRespiratoryRate(e.target.value)}
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
           />
         </div>
@@ -480,7 +596,7 @@ export default function ConsultationForm({
 
       <button
         type="submit"
-        disabled={saving}
+        disabled={busy}
         className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
       >
         {saving ? "Guardando..." : "Guardar"}
@@ -488,8 +604,38 @@ export default function ConsultationForm({
     </form>
   );
 
+  const header = (
+    <div className="print:hidden mb-4 flex items-start justify-between gap-4">
+      <div>
+        <h1 className="mb-1 text-lg font-semibold text-slate-900">
+          {canEditNotes ? "Consulta" : "Signos vitales"}
+        </h1>
+        <p className="text-sm text-slate-500">
+          {appointmentDate} · {appointmentStartTime}–{appointmentEndTime}
+          {doctorName && doctorName !== "—" ? ` · ${doctorName}` : ""}
+        </p>
+      </div>
+
+      {canEditNotes && (
+        <button
+          type="button"
+          onClick={handleFinish}
+          disabled={busy}
+          className="shrink-0 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
+        >
+          {finishing ? "Terminando..." : "Terminar consulta"}
+        </button>
+      )}
+    </div>
+  );
+
   if (!canEditNotes) {
-    return vitalsAndNotes;
+    return (
+      <div>
+        {header}
+        {vitalsAndNotes}
+      </div>
+    );
   }
 
   // Cuando hay copia + media hoja, las dos hojas deben sumar como máximo
@@ -516,8 +662,10 @@ export default function ConsultationForm({
   };
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-8 print:block">
-      <div className="lg:col-span-3">{vitalsAndNotes}</div>
+    <div>
+      {header}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-8 print:block">
+        <div className="lg:col-span-3">{vitalsAndNotes}</div>
 
       <div className="flex flex-col lg:col-span-5">
         <div className="print:hidden mb-3 flex items-center justify-between">
@@ -609,6 +757,7 @@ export default function ConsultationForm({
           onClose={() => setSettingsOpen(false)}
         />
       )}
+      </div>
     </div>
   );
 }

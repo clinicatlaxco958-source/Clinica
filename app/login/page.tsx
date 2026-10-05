@@ -150,6 +150,13 @@ export default function LoginPage() {
             {loading ? "Entrando..." : "Entrar"}
           </button>
         </form>
+
+        <Link
+          href="/aviso-de-privacidad"
+          className="mt-4 block text-center text-xs text-slate-400 hover:text-slate-600"
+        >
+          Aviso de privacidad
+        </Link>
       </div>
     </div>
   );

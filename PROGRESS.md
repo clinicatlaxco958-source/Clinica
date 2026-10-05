@@ -89,6 +89,186 @@ no hace falta correrlos en una instalación nueva. Tablas: `clinics`,
 `users`, `doctors`, `patients`, `appointments`, `consultations`,
 `prescription_items`.
 
+## Historia clínica / cumplimiento NOM-004 y NOM-024 (en curso)
+
+Ver `NEGOCIO.md` sección 13 para el plan completo acordado con Tony (y
+pendiente de mostrarle al Doctor). Fases: 1) ficha de identificación en
+`patients` — **hecho** (migración 016); 2) tabla `medical_histories` +
+pantallas — **hecho** (migraciones 017 y 018, ver detalle abajo); 3)
+auditoría de cambios — **hecho** (migración 019, ver detalle abajo,
+aunque sin pantalla para navegar el historial); 4) consentimiento
+informado — **pendiente**.
+
+**Fase 2 implementada (migración 017):** tabla `medical_histories` (1
+fila por paciente, no por cita); componente `MedicalHistorySection.tsx`
+en `/dashboard/citas/[id]/consulta`; sección de "datos pendientes de
+identificación" (campos de la migración 016) visible/editable para
+cualquier staff con acceso a la cita, incluida recepción — se recalcula
+en cada carga y sigue apareciendo hasta completarse. Odontograma como
+campo de texto libre opcional (no bloquea guardar), pendiente de un
+componente visual si se necesita.
+
+**Rol de enfermería (migración 018):** a petición del Doctor (quiere que
+el interrogatorio/antecedentes de la primera visita se capturen en el
+lobby antes de la consulta, sin quitarle tiempo al doctor), se agregó el
+rol `nurse` ("Enfermería"), separado de `receptionist`. La historia
+clínica se dividió en dos bloques con dueño distinto:
+- **Interrogatorio/antecedentes** (heredo-familiares, personales
+  patológicos/no patológicos, alergias, padecimiento actual,
+  interrogatorio por aparatos y sistemas, estudios previos, antecedentes
+  odontológicos) — editable por enfermería, doctor o admin, con su
+  propio botón "Guardar antecedentes".
+- **Juicio clínico** (exploración física, diagnóstico, pronóstico, plan
+  de tratamiento, exploración bucal, diagnóstico/plan de tratamiento
+  dental, odontograma) — **exclusivo de doctor/admin sin importar el
+  rol**, con su propio botón "Guardar exploración y diagnóstico".
+  Enfermería puede *ver* este bloque (continuidad de cuidados) pero no
+  editarlo. Blindado con un **trigger en base de datos**
+  (`medical_histories_restrict_clinical_fields`), no solo con RLS/UI —
+  a propósito más estricto que el resto del proyecto, porque aquí el
+  límite es "quién puede diagnosticar" (restricción legal, no solo de
+  producto).
+
+`intake_by`/`intake_at` y `clinical_by`/`clinical_at` registran quién
+capturó cada bloque y cuándo.
+
+**Fase 3 — auditoría de cambios (migración 019):** antes de cada
+`UPDATE` en `consultations` o `medical_histories`, el trigger
+`log_clinical_audit()` copia la fila completa **como estaba antes** a
+`clinical_audit_log` (snapshot en `jsonb`, no solo los campos que
+cambiaron). Tabla histórica, no de uso diario — solo admin puede leerla
+(`auth_is_admin()`), sin política de insert/update/delete (solo el
+trigger, `security definer`, escribe ahí — mismo patrón que el kardex
+inmutable de `pharmacy_movements`). **No hay todavía una pantalla para
+navegar el historial de versiones** — el dato queda capturado y seguro,
+pero si se quiere ver "cómo estaba esta nota antes de la corrección"
+hoy solo se puede consultando la tabla directamente; construir esa
+pantalla es trabajo futuro si se pide. También se agregó
+`consultations.updated_by`, y tanto en signos vitales
+(`ConsultationForm.tsx`) como en cada bloque de la historia clínica
+(`MedicalHistorySection.tsx`) ahora se muestra "Última edición: fecha y
+hora, por quién".
+
+**Catálogo de especialidades + modal de historia clínica (migración
+020):** `doctors.specialty` pasó de texto libre a catálogo controlado
+(`lib/specialties.ts`, check constraint) — arranca con "Médico general"
+(área médica) y "Dentista" (área dental); pediatría se omitió por ahora
+(ver NEGOCIO.md sección 13). El bloque clínico de `medical_histories` a
+exigir ahora se decide por el área del doctor de esa cita, no por
+`clinics.type` (que se deja de usar para esto, sin borrar la columna) —
+esto corrige un bug real: antes una clínica mixta hubiera exigido el
+bloque médico y el dental juntos, bloqueando para siempre a un paciente
+que solo usa un tipo de servicio. Además, cuando falta historia clínica
+obligatoria, el formulario ahora aparece en un **modal** (se puede
+cerrar para ver otra cosa en pantalla, dejando un aviso permanente para
+reabrirlo) en vez de vivir siempre incrustado — pero **"Terminar
+consulta" queda bloqueado** mientras siga incompleta, que es el punto
+real donde la norma exige que la visita no quede sin documentar.
+Requirió un componente cliente nuevo, `ConsultaClient.tsx`, que agrupa
+`MedicalHistorySection.tsx` + `ConsultationForm.tsx` (antes
+independientes) para compartir ese estado de completitud.
+
+**Comparación contra el texto oficial de NOM-004 + checks de
+tabaco/alcohol (migración 021):** se investigó el numeral 6.1 y el
+Apéndice A de la norma para revisar qué tan completo está el formulario
+— no hay un formato único obligatorio (numeral 5.13 deja que cada
+institución diseñe el suyo), así que el enfoque general ya era correcto.
+Se corrigió un hallazgo real: "tabaquismo/alcohol/otras sustancias
+psicoactivas" iba mal ubicado (estaba en el placeholder de "personales
+no patológicos", la norma lo pide dentro de "personales patológicos").
+Ahora son **3 checks** (`tobacco_use`, `alcohol_use`,
+`other_substances_use`, cada uno con su `*_detail` opcional) en vez de
+texto libre — un checkbox siempre tiene respuesta válida, así que no
+suman a la validación de "campo obligatorio".
+
+**Frecuencia cardiaca y respiratoria (migración 022):** la norma exige
+estos dos junto con temperatura/presión arterial en la exploración
+física — `consultations` no los capturaba. Se agregaron
+`heart_rate_bpm`/`respiratory_rate_rpm`, con sus campos en el formulario
+de signos vitales (`ConsultationForm.tsx`) y ya aparecen en la vista
+previa/receta impresa ("FC: Xlpm", "FR: Xrpm").
+
+Queda pendiente, de menor prioridad: enriquecer "Exploración física" con
+una guía más estructurada (hoy es un solo textarea libre). Ver
+NEGOCIO.md sección 13 para el detalle completo.
+
+**Bug corregido: el modal de historia clínica se cerraba solo a media
+escritura.** `intakeComplete`/`clinicalComplete` en
+`MedicalHistorySection.tsx` se recalculaban en cada tecla a partir de
+`history` (estado en vivo) — en cuanto el último campo obligatorio dejaba
+de estar vacío (ej. al escribir en "Alergias"), el modal se cerraba solo
+y la sección saltaba a la vista inline, aunque nadie hubiera dado
+"Guardar" todavía. Peor aún: `historyComplete` (el que bloquea "Terminar
+consulta") también se hubiera reportado como completo sin que nada se
+hubiera guardado de verdad. Se corrigió convirtiendo ambos en estado que
+**solo se actualiza dentro de `saveIntake`/`saveClinical` al guardar con
+éxito** — ya no dependen de cada tecla, dependen de lo que realmente
+quedó persistido.
+
+**Rediseño: accesos de historia clínica movidos al banner del paciente +
+side panel de consultas anteriores.** A petición de Tony, la pantalla
+de consulta se reorganizó:
+- `PatientInfoCard.tsx` (el banner del paciente) es ahora el **hub de
+  todos los accesos**: "Consultas anteriores", "Antecedentes" (Ver/
+  Editar), "Exploración y diagnóstico" (Ver/Editar), y la ficha de
+  identificación pendiente — ya no viven repartidos en la tarjeta de
+  historia clínica.
+- `MedicalHistorySection.tsx` dejó de dibujar su propia tarjeta/botones:
+  ahora es puramente los tres modales (antecedentes, exploración y
+  diagnóstico, ficha de identificación), **controlados desde afuera**
+  (`intakeMode`/`clinicalMode`: `closed`/`view`/`edit`). "Ver" deja los
+  campos deshabilitados (mismo textarea, no texto plano); un botón
+  "Editar" dentro del propio modal cambia a modo edición sin cerrarlo.
+  Esto también simplificó el candado de "Terminar consulta": ya no hace
+  falta el contador `forceOpenSignal`, `ConsultaClient.tsx` simplemente
+  pone el modo en `"edit"` directo.
+- Nuevo `PatientVisitsPanel.tsx`: side panel de consultas anteriores
+  **específico de esta pantalla** (no reemplaza `PatientHistoryModal.tsx`,
+  que sigue tal cual en `/dashboard/pacientes` — decisión explícita de
+  no unificarlos por ahora). Dos paneles apilados desde la derecha, 1/3
+  de la pantalla cada uno: lista de citas pasadas, y al seleccionar una,
+  un segundo panel encima con el detalle de solo lectura — signos
+  vitales, notas/padecimiento, y **tratamiento** (esto último no se
+  mostraba antes en ningún historial, se agregó el join a
+  `prescription_items`). "← Regresar" cierra solo el detalle; clic
+  afuera cierra ambos. Ambos paneles se deslizan al entrar/salir
+  (doble `requestAnimationFrame`, no un `setTimeout` corto — con eso
+  solo se veía la animación de salida, nunca la de entrada, porque el
+  navegador a veces pintaba ya con el estado final sin nada que animar).
+
+**Revisión final antes de mostrárselo al Doctor (2026-09-30):**
+- **Grupo étnico** (migración 023) y **guía de exploración física** —
+  los dos pendientes menores de la comparación con NOM-004, ya
+  resueltos (ver sección de arriba).
+- **Aviso de privacidad** — nuevo hallazgo, aparte de NOM-004: la
+  LFPDPPP exige avisar (y para datos de salud, pedir consentimiento
+  expreso) desde el primer contacto, con independencia de si hay
+  procedimientos de riesgo o no. Se implementó el borrador en
+  `/aviso-de-privacidad` (ruta pública, linkeada desde `/login`) con los
+  datos propios de la clínica marcados para que el Doctor los complete
+  y apruebe — falta, como siguiente paso, la captura de consentimiento
+  expreso por paciente (checkbox + fecha), que no se construyó todavía
+  a propósito (se pidió el borrador y la página, no eso).
+- **Contexto operativo:** el acuerdo con el Doctor es usar la app con
+  **datos ficticios** hasta poder certificar el software — están en
+  etapa de construcción/feedback, no con pacientes reales todavía. Esto
+  baja la urgencia del riesgo de backups de Supabase Free (sigue
+  pendiente, pero ya no es una pérdida de expediente real mientras los
+  datos sean ficticios) — hay que revisitarlo antes de pasar a datos
+  reales, no después. Ver NEGOCIO.md sección 13 para el detalle.
+
+**Apertura automática de modales (2026-10-04):** al entrar a la
+pantalla de consulta, si falta algo importante (ficha de identificación
+y/o historia clínica), el modal correspondiente se abre solo en modo
+edición, en vez de esperar a que alguien entre al banner a buscarlo —
+pedido explícito de Tony. Cada bloque se abre solo si le falta a quien
+está viendo la pantalla en ese momento (mismo criterio de siempre: a
+enfermería no se le abre el bloque clínico, que no puede editar). Si
+más de un bloque está incompleto a la vez, los modales quedan apilados
+y se cierran uno a uno. Si sigue sin completarse, se vuelve a abrir en
+la siguiente visita — a propósito, mismo espíritu que el resto del
+candado de historia clínica.
+
 ## Próximos pasos / pendientes conocidos
 
 1. **Horario semanal con variación por día/excepciones** — hoy la

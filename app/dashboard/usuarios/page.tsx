@@ -8,6 +8,7 @@ import UserRowActions from "./UserRowActions";
 const roleLabels: Record<string, string> = {
   doctor: "Doctor",
   receptionist: "Recepcionista",
+  nurse: "Enfermería",
 };
 
 export default async function UsuariosPage() {

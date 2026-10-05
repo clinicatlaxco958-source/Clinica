@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { friendlyErrorMessage } from "@/lib/errors";
+import { specialtyLabel } from "@/lib/specialties";
 
 type Doctor = {
   id: string;
@@ -629,7 +630,7 @@ export default function NewAppointmentModal({
               {doctors.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.fullName}
-                  {d.specialty ? ` (${d.specialty})` : ""}
+                  {d.specialty ? ` (${specialtyLabel(d.specialty)})` : ""}
                 </option>
               ))}
             </select>

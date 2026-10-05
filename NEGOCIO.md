@@ -312,3 +312,288 @@ imprimirla** (ver `PROGRESS.md`).
 pantalla de consulta, se puede ver el historial de consultas de un
 paciente — respeta la misma regla de acceso (un doctor solo ve las
 consultas que él mismo tuvo con ese paciente).
+
+## 13. Historia clínica y cumplimiento normativo (decidido, pendiente de implementar)
+
+**Por qué esta sección existe.** El Doctor de la clínica piloto pidió un
+módulo de "historia clínica" que cumpla con **NOM-024-SSA3-2012**. Al
+investigar quedó claro que en realidad aplican dos normas distintas:
+**NOM-004-SSA3-2012** ("Del expediente clínico") define el *contenido*
+obligatorio de la historia clínica (ficha de identificación, antecedentes
+heredo-familiares/personales patológicos/personales no patológicos,
+padecimiento actual, exploración física, diagnóstico, pronóstico, plan de
+tratamiento); **NOM-024-SSA3-2012** son requisitos *del sistema*
+(auditoría/trazabilidad de cambios, no-alterabilidad de notas cerradas,
+control de acceso — ya cubierto por RLS —, conservación de datos). A esto
+se suma la **LFPDPPP** (datos de salud como datos sensibles, ver sección
+2) y, si algún día se atiende una clínica dental, **NOM-013-SSA2-2015**
+(antecedentes/odontograma específicos de odontología).
+
+**Nivel de cumplimiento elegido:** contenido NOM-004 completo +
+integridad/auditoría básica de NOM-024. **Explícitamente fuera de
+alcance por ahora**: firma electrónica avanzada certificada (NOM-151) e
+interoperabilidad real (HL7, catálogos nacionales) — es un proyecto mucho
+más grande que el resto de la app junta, no se justifica para una clínica
+piloto de un consultorio.
+
+**La historia clínica distingue médica vs. dental desde el diseño**
+(según `clinics.type`, que ya existe en el schema): comparten un núcleo
+común (ficha de identificación, antecedentes) pero cada tipo tiene su
+sección específica. El odontograma interactivo (mapa de 32 dientes) se
+empieza como campo de texto/JSON simple — un componente visual real de
+odontograma es una feature grande por sí sola, se evalúa después si la
+clínica dental piloto lo necesita.
+
+**Captura progresiva de datos — regla importante para no salirse de la
+norma.** El Doctor pidió que la historia clínica se capture en la primera
+consulta igual que los signos vitales, y que si algún dato no se pudo
+capturar (ej. CURP porque el paciente no trae su identificación), el
+sistema lo recuerde como pendiente en visitas siguientes hasta
+completarse. Esto es válido **solo si se separan dos tipos de campo**:
+
+- **Núcleo clínico — obligatorio en la primera consulta, nunca queda
+  pendiente:** antecedentes heredo-familiares, antecedentes personales
+  patológicos (incluye **alergias**, dato crítico de seguridad),
+  antecedentes personales no patológicos, padecimiento actual,
+  exploración física, diagnóstico y plan de tratamiento. Todo esto se
+  obtiene hablando con el paciente, no depende de que traiga un
+  documento — no hay excusa legítima para posponerlo, y posponerlo
+  (sobre todo alergias) es un riesgo real si el doctor prescribe antes de
+  tener esa información.
+- **Datos administrativos — sí pueden quedar pendientes con recordatorio
+  persistente:** CURP (requiere identificación oficial física), domicilio
+  completo/código postal, tipo de sangre (si el paciente no lo sabe de
+  memoria), contacto de emergencia. Estos son los que justifican el botón
+  de "completar datos pendientes" reapareciendo en la 2a/3a visita hasta
+  llenarse.
+
+Cuando un dato pendiente se llena después (ej. la CURP en la tercera
+visita), la auditoría (sección de integridad, ver `CLAUDE.md` cuando se
+implemente) debe registrar la fecha real en que se capturó, **no**
+la fecha de la primera consulta — importante para la trazabilidad que
+exige NOM-024.
+
+**Regla de acceso propuesta (a confirmar al implementar):** cualquier
+doctor de la clínica puede *ver* la historia clínica de cualquier
+paciente (continuidad de atención, es el propósito de NOM-004), pero solo
+un doctor —no recepción— puede *editarla*, igual que las notas de
+consulta (sección 12).
+
+**Rol de enfermería y captura en el lobby antes de la consulta
+(implementado, migración 018).** El Doctor pidió que el interrogatorio/
+antecedentes de la primera visita se capturen en el lobby, antes de que
+el paciente pase a consulta, para no quitarle tiempo de consultorio.
+Esto es válido según NOM-004 **solo si lo hace personal de salud**
+(enfermería), no una recepcionista/secretaria administrativa — por eso
+se agregó un rol nuevo `nurse` ("Enfermería" en la interfaz), **separado**
+de `receptionist` (una clínica puede tener ambas figuras a la vez, no se
+reemplazó el rol existente).
+
+Dentro de la propia historia clínica hay dos bloques con distinto dueño:
+
+- **Interrogatorio/antecedentes** ("intake": heredo-familiares,
+  personales patológicos/no patológicos, alergias, padecimiento actual,
+  interrogatorio por aparatos y sistemas, estudios previos, antecedentes
+  odontológicos) — es lo que narra el paciente. Lo puede capturar
+  **enfermería, el doctor, o admin**.
+- **Juicio clínico** (exploración física, diagnóstico, pronóstico, plan
+  de tratamiento, y sus equivalentes dentales: exploración bucal,
+  diagnóstico dental, plan de tratamiento dental, odontograma) — **sigue
+  siendo exclusivo del doctor/admin sin importar el nombre del rol**.
+  Diagnosticar y prescribir tratamiento está reservado por ley al médico
+  con cédula profesional — no es negociable con solo cambiarle el nombre
+  a un puesto administrativo, y por eso no basta con documentarlo:
+  además de las políticas RLS, hay un **trigger en la base de datos**
+  (`medical_histories_restrict_clinical_fields`) que rechaza cualquier
+  intento de tocar esas columnas si quien hace la operación no es doctor
+  ni admin, incluso si alguien llamara a la API directo saltándose la
+  interfaz. Es una excepción a propósito más estricta que el resto del
+  proyecto (que en casos similares, como `consultations.notes`, confía
+  solo en que la app no mande ese campo) — aquí el costo de un error
+  (un diagnóstico atribuible a alguien sin licencia médica) es mayor.
+
+Enfermería sí puede **ver** (no editar) el juicio clínico ya capturado
+por el doctor, para dar continuidad de cuidados sin poder modificarlo.
+
+Se agregaron `intake_by`/`intake_at` y `clinical_by`/`clinical_at` en
+`medical_histories` para identificar quién capturó cada bloque —versión
+mínima y adelantada de la trazabilidad de autoría que NOM-004 exige.
+
+**Fase 3 — auditoría de cambios (implementada, migración 019).** Falta
+el requisito de que ninguna nota clínica se pueda sobreescribir sin dejar
+rastro de qué decía antes. Se agregó `clinical_audit_log`: antes de cada
+edición de una consulta o de una historia clínica, el sistema guarda una
+copia completa de cómo estaba esa fila justo antes del cambio. No cambia
+nada de cómo el doctor/enfermería guarda su trabajo (sigue siendo el
+mismo botón de siempre) — es una copia de seguridad automática por si
+algún día hace falta revisar qué decía una nota antes de una corrección.
+Por ahora es un archivo histórico, no una pantalla de consulta diaria:
+solo el Administrador puede revisarlo, y no hay todavía una pantalla
+para navegarlo cómodamente (se puede agregar si se necesita). También se
+agregó `consultations.updated_by` y en la pantalla de consulta ahora se
+ve "Última edición: fecha y hora, por quién" tanto en signos vitales
+como en cada bloque de la historia clínica.
+
+**Regla de trabajo permanente para cualquier sesión futura (pedida
+explícitamente por Tony):** si un requerimiento de producto entra en
+conflicto con NOM-004, NOM-024, LFPDPPP o cualquier otra norma
+relacionada con datos de salud, **se debe señalar explícitamente antes de
+implementarlo** — no implementarlo silenciosamente asumiendo que está
+bien, y tampoco negarse sin explicar el conflicto concreto y ofrecer una
+alternativa que sí cumpla.
+
+**"Primera visita" se define por especialidad, no por clínica completa
+ni por doctor individual (aclarado 2026-09-20, pendiente de corregir en
+código).** El núcleo de antecedentes/alergias sí se comparte entre TODOS
+los doctores de la clínica sin importar especialidad (ya está bien así).
+Pero la exploración/diagnóstico inicial es distinta por especialidad: si
+el paciente ya fue valorado por un médico general, otro médico general
+de la misma clínica no debería repetir esa valoración (continuidad entre
+doctores de la misma área) — pero si solo lo ha visto el dentista, el
+médico general sí necesita hacer la suya la primera vez que lo atienda
+(son exploraciones/diagnósticos distintos, uno no sustituye al otro).
+
+**Bug de diseño — corregido (migración 020).** Antes, el bloque a exigir
+se decidía por `clinics.type` (a nivel de toda la clínica): una clínica
+mixta hubiera exigido el bloque médico Y el dental juntos, bloqueando
+para siempre a un paciente que solo usa un tipo de servicio. Se corrigió
+junto con el catálogo de especialidades (ver abajo): ahora el bloque
+clínico a exigir se decide por el **área de la especialidad del doctor
+de esa cita en particular**, no por el tipo de clínica — `clinics.type`
+ya no se usa para esto (se deja la columna sin borrar, ver más abajo).
+
+**Catálogo de especialidades (implementado, migración 020).** Antes
+`doctors.specialty` era texto libre — nada impedía registrar un doctor
+con una especialidad que no correspondiera a la clínica, y no había
+forma estructurada de saber el "área" de cada doctor. Se decidió:
+- **Catálogo global y fijo** (no personalizable por clínica) — vive en
+  código (`lib/specialties.ts`), igual que la lista de presentaciones de
+  medicamento. Ampliarlo el día de mañana (ej. si llega un pediatra) es
+  una migración chica + agregar la entrada en el archivo.
+- **Arranca con dos especialidades:** "Médico general" (área médica) y
+  "Dentista" (área dental). Pediatría se mencionó como ejemplo pero se
+  omite por ahora — cuando de verdad haga falta, ahí se decide si es una
+  variante del área médica o un área propia con su propio bloque de
+  historia clínica (ej. antecedentes perinatales, vacunación).
+- `doctors.specialty` pasó de texto libre a lista controlada (dropdown
+  en el alta de usuario y en el perfil del doctor, con check constraint
+  en la base de datos).
+- La app todavía no estaba en uso oficial, así que por indicación
+  explícita de Tony la migración simplemente resetea cualquier
+  especialidad que no calce con el catálogo nuevo, sin intentar
+  preservar/migrar el texto libre anterior.
+
+**Modal de historia clínica + candado en "Terminar consulta"
+(implementado).** Cuando al paciente le falta historia clínica
+obligatoria (el bloque que le corresponda según canEditIntake/
+canEditClinical), el formulario aparece en un **modal** en vez de vivir
+siempre incrustado en la pantalla de consulta (para no contaminarla).
+Aclaración normativa importante que motivó este diseño: la norma no
+exige bloquear que el doctor **vea** al paciente sin historia clínica
+(no podría ser de otra forma, la historia clínica se genera durante ese
+mismo primer encuentro) — exige que la **visita no quede cerrada sin
+documentar**. Por eso:
+- El modal **sí se puede cerrar** (botón × o clic fuera) para revisar
+  otra cosa en pantalla mientras tanto — no atora al doctor.
+- Si se cierra sin completarse, queda un aviso compacto y permanente
+  ("⚠ Historia clínica incompleta — completar") para reabrirlo.
+- El candado real vive en **"Terminar consulta"**: no se puede dar por
+  terminada la consulta mientras falte el bloque obligatorio — ahí se
+  reabre el modal automáticamente. Esto es válido para cualquier visita
+  del paciente (no solo la primera), hasta que la historia clínica quede
+  completa una sola vez; después de eso no se vuelve a pedir.
+- A cada rol se le pide solo lo que le toca: a enfermería no se le
+  muestra el modal por algo que no puede editar (el bloque clínico es
+  del doctor); al doctor si le falta el bloque de enfermería (ej. no
+  había enfermera disponible) también se le pide a él.
+
+Técnicamente, esto requirió agrupar `MedicalHistorySection.tsx` y
+`ConsultationForm.tsx` bajo un componente cliente nuevo,
+`ConsultaClient.tsx`, que comparte el estado de "¿está completa la
+historia clínica?" entre ambos (antes eran independientes entre sí).
+
+**Comparación contra el texto oficial de NOM-004 (2026-09-29).** Se
+investigó el texto completo de la norma (numeral 6.1 "Historia Clínica"
+y el Apéndice A, que es la lista de verificación oficial) para revisar
+qué tan completo está nuestro formulario. Conclusión importante: **no
+existe un formato único obligatorio** — la norma (numeral 5.13) permite
+que cada institución diseñe el suyo, siempre que cubra el contenido
+mínimo; nuestro enfoque ya era el correcto. Hallazgos:
+
+- **Corregido (migración 021):** "uso y dependencia del tabaco, del
+  alcohol y de otras sustancias psicoactivas" lo pedía la norma dentro
+  de *antecedentes personales patológicos* — nuestro placeholder lo
+  tenía mal ubicado en *no patológicos*. Se convirtió en **3 checks**
+  (tabaquismo/alcoholismo/otras sustancias), cada uno con un campo de
+  detalle opcional que aparece solo si se marca "sí". Un checkbox
+  siempre tiene respuesta válida (marcado o no), así que no participa en
+  la validación de "campo obligatorio" como los demás antecedentes.
+- **Corregido (migración 022):** la norma exige que los signos vitales
+  de la exploración física incluyan temperatura, tensión arterial,
+  frecuencia cardiaca y frecuencia respiratoria — `consultations` solo
+  capturaba peso, talla, temperatura y presión arterial. Se agregaron
+  `heart_rate_bpm` y `respiratory_rate_rpm`, visibles en el formulario de
+  signos vitales y en la vista previa/receta impresa.
+- **Corregido:** "Exploración física" seguía siendo un campo de texto
+  libre sin guía — se enriqueció el placeholder para que recuerde cubrir
+  cada región (habitus exterior, cabeza/cuello, tórax, abdomen,
+  miembros, genitales si aplica). No se separó en columnas nuevas: la
+  norma no exige esa estructura a nivel de base de datos, solo que el
+  contenido esté.
+- **Corregido (migración 023):** "grupo étnico" (numeral 6.1.1, "en su
+  caso") no se capturaba. Se agregó como catálogo con los grupos más
+  numerosos + "Otro (especifique)" en texto libre — no es el catálogo
+  oficial completo del INPI (68 pueblos reconocidos), solo una lista
+  práctica. Es opcional y **nunca cuenta** para el aviso de "datos
+  pendientes" de la ficha de identificación (a diferencia de CURP/
+  domicilio/etc., que sí son administrativos a completar eventualmente).
+- **Idea en pausa (no se descarta, se retoma con más clínicas):** dar de
+  alta un catálogo de campos + campos personalizados por clínica (como
+  antes se hacía en papel). Viable como diferenciador de plan (NEGOCIO.md
+  sección 9), pero con un límite que no se puede negociar: el núcleo
+  obligatorio de NOM-004 tendría que quedar bloqueado/no removible por el
+  Admin — solo se delegaría la posibilidad de *agregar* campos extra,
+  nunca quitar los obligatorios.
+
+**Aviso de privacidad — borrador implementado (2026-09-30), falta que el
+Doctor lo complete y apruebe.** Es un hallazgo aparte de NOM-004: bajo la
+LFPDPPP, cualquier negocio que recaba datos personales —y los de salud
+son "datos sensibles", el nivel más protegido— debe avisarle al titular
+qué datos recaba, para qué, y cómo ejercer sus derechos ARCO, **desde el
+primer contacto**. Es distinto del "consentimiento informado" de
+NOM-004 (que solo aplica a procedimientos específicos de riesgo:
+cirugía, anestesia general, etc. — una clínica de consulta ambulatoria
+normal no necesariamente entra en esa lista).
+
+- **Es responsabilidad de cada clínica, no del software.** El
+  "responsable" de los datos bajo la LFPDPPP es la clínica que los
+  recaba, no ClinicSaaS. Por eso el borrador (`/aviso-de-privacidad`,
+  ruta pública fuera de `/dashboard`) deja marcados en amarillo los
+  datos propios de la clínica que el Doctor debe confirmar/llenar
+  (nombre o razón social, domicilio, contacto para solicitudes de
+  privacidad) — el resto del texto (qué datos se recaban, para qué, cómo
+  se protegen) ya está redactado porque corresponde a cómo funciona el
+  sistema, eso sí lo sabíamos.
+- **Contenido estático a propósito**, no se jala de `clinics` en la base
+  de datos — hoy solo hay una clínica piloto, y además la tabla
+  `clinics` tiene RLS que requiere sesión (una página pública no podría
+  leerla de todos modos). Si el día de mañana hay varias clínicas con
+  avisos distintos, se vuelve una plantilla por clínica.
+- **Pendiente, siguiente paso natural:** la LFPDPPP pide **consentimiento
+  expreso** para datos sensibles (Art. 9) — no basta con publicar el
+  aviso, hay que registrar que cada paciente lo aceptó. Falta construir
+  esa captura (un checkbox con fecha, parecido a `intake_by`/`intake_at`)
+  — se dejó fuera de este cambio a propósito porque lo que se pidió fue
+  "el borrador y la página", no la captura de consentimiento todavía.
+
+**Contexto operativo importante (2026-09-30): el acuerdo con el Doctor
+es usar la app con datos ficticios hasta poder certificar el software.**
+Están en etapa de construcción — específicamente, en la etapa donde el
+Doctor da feedback de su experiencia usándola, todavía sin datos reales
+de pacientes. Esto no cambia el estándar con el que se construye (se
+sigue apuntando a cumplir NOM-004/NOM-024/LFPDPPP desde ahora, no
+después), pero sí baja la urgencia inmediata de cosas como el riesgo de
+backups (sección 13, Fase 3) — mientras los datos sean ficticios, perder
+el proyecto de Supabase no es una pérdida de expediente clínico real.
+Cuando se acuerde el paso a datos reales, hay que revisitar ese riesgo
+antes de ese momento, no después.

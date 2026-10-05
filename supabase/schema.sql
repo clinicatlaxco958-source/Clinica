@@ -47,7 +47,11 @@ create table users (
   clinic_id uuid not null references clinics(id) on delete cascade,
   full_name text not null,
   -- función clínica (independiente del permiso de administrador, ver is_admin)
-  role text check (role in ('doctor', 'receptionist')),
+  -- 'nurse' (enfermería/auxiliar clínico): puede capturar el
+  -- interrogatorio/antecedentes de la historia clínica, pero no el
+  -- juicio clínico (exploración/diagnóstico/tratamiento) — ver
+  -- migración 018 y NEGOCIO.md sección 13.
+  role text check (role in ('doctor', 'receptionist', 'nurse')),
   is_admin boolean not null default false,
   -- Permiso de administración de farmacia (mismo patrón que is_admin:
   -- independiente de role, no se ata a "ser recepcionista").
@@ -64,7 +68,10 @@ create table doctors (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references users(id) on delete cascade,
   clinic_id uuid not null references clinics(id) on delete cascade,
-  specialty text,
+  -- Catálogo controlado, no texto libre (ver lib/specialties.ts y
+  -- NEGOCIO.md sección 13): decide el "área" (médica/dental) que se usa
+  -- para saber qué bloque de la historia clínica exigir en cada cita.
+  specialty text check (specialty in ('medico_general', 'dentista')),
   -- Duración de consulta (min) de este doctor. Si es null, se usa
   -- clinics.default_appointment_duration_minutes.
   default_duration_minutes integer check (default_duration_minutes > 0),
@@ -119,7 +126,30 @@ create table patients (
   email text,
   birth_date date not null,
   notes text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Ficha de identificación (NOM-004-SSA3-2012, ver NEGOCIO.md sección
+  -- 13) — nullable a propósito: son datos administrativos que pueden
+  -- depender de un documento (ej. CURP) y capturarse de forma
+  -- progresiva, a diferencia del núcleo clínico obligatorio en
+  -- `medical_histories`.
+  sex text check (sex in ('femenino', 'masculino')),
+  curp text check (curp ~ '^[A-Z0-9]{18}$'),
+  address text,
+  occupation text,
+  marital_status text check (marital_status in ('soltero', 'casado', 'union_libre', 'divorciado', 'viudo')),
+  blood_type text check (blood_type in ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')),
+  emergency_contact_name text,
+  emergency_contact_phone text,
+  -- Grupo étnico (NOM-004 numeral 6.1.1, "en su caso" — opcional,
+  -- nunca cuenta para el aviso de "datos pendientes"). Catálogo con los
+  -- grupos más numerosos + "otro" de texto libre, no el catálogo
+  -- oficial completo del INPI.
+  ethnic_group text check (ethnic_group in (
+    'ninguno', 'nahuatl', 'maya', 'zapoteco', 'mixteco', 'otomi',
+    'totonaca', 'tzeltal', 'tzotzil', 'mazahua', 'mazateco', 'huasteco',
+    'chol', 'purepecha', 'mixe', 'chinanteco', 'afromexicano', 'otro'
+  )),
+  ethnic_group_detail text
 );
 
 -- ------------------------------------------------------------
@@ -134,7 +164,7 @@ create table appointments (
   start_time time not null,
   end_time time not null,
   status text not null default 'pendiente'
-    check (status in ('pendiente', 'confirmada', 'completada', 'cancelada', 'no_show')),
+    check (status in ('pendiente', 'confirmada', 'consultando', 'completada', 'cancelada', 'no_show')),
   payment_status text not null default 'pendiente'
     check (payment_status in ('pagado', 'pendiente')),
   notes text,
@@ -154,10 +184,101 @@ create table consultations (
   height_cm numeric(5, 1),
   temperature_c numeric(4, 1),
   blood_pressure text,
+  -- NOM-004 numeral 6.1.2 exige estos dos junto con temperatura/presión.
+  heart_rate_bpm integer check (heart_rate_bpm is null or heart_rate_bpm > 0),
+  respiratory_rate_rpm integer check (respiratory_rate_rpm is null or respiratory_rate_rpm > 0),
   notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  -- Quién hizo el último cambio (qué decía antes queda en
+  -- clinical_audit_log, ver más abajo).
+  updated_by uuid references users(id)
+);
+
+-- ------------------------------------------------------------
+-- Tabla: medical_histories — historia clínica, núcleo obligatorio de
+-- NOM-004-SSA3-2012 (ver NEGOCIO.md sección 13). Una fila por PACIENTE
+-- (no por cita, a diferencia de `consultations`): antecedentes,
+-- exploración y diagnóstico son del paciente y se consultan/amplían en
+-- cualquier visita futura. Todo texto libre y nullable a nivel de BD —
+-- la obligatoriedad de llenar el núcleo en la primera consulta se
+-- exige en la app, no con NOT NULL, para no bloquear ampliaciones
+-- parciales después (ej. una alergia nueva). `clinics.type` decide qué
+-- secciones aplican en la UI ('medica'/'dental'/'mixta'); el núcleo
+-- común aplica siempre.
+-- ------------------------------------------------------------
+create table medical_histories (
+  id uuid primary key default gen_random_uuid(),
+  patient_id uuid not null unique references patients(id) on delete cascade,
+  clinic_id uuid not null references clinics(id) on delete cascade,
+
+  heredo_familiares text,
+  personales_no_patologicos text,
+  personales_patologicos text,
+  -- Tabaquismo/alcoholismo/otras sustancias psicoactivas — checks
+  -- estructurados dentro de "personales patológicos" (NOM-004 numeral
+  -- 6.1.1 los ubica ahí, no en "no patológicos"). Sin check de
+  -- obligatoriedad: un checkbox siempre tiene respuesta válida
+  -- (marcado o no), a diferencia de un campo de texto vacío.
+  tobacco_use boolean,
+  tobacco_detail text,
+  alcohol_use boolean,
+  alcohol_detail text,
+  other_substances_use boolean,
+  other_substances_detail text,
+  allergies text,
+
+  present_illness text,
+  systems_review text,
+  physical_exam text,
+  previous_studies text,
+  diagnosis text,
+  prognosis text,
+  treatment_plan text,
+
+  -- odontogram es texto libre en esta primera versión — un mapa visual
+  -- interactivo de 32 piezas se evalúa después (ver NEGOCIO.md sección 13).
+  dental_history text,
+  oral_exam text,
+  odontogram text,
+  dental_diagnosis text,
+  dental_treatment_plan text,
+
+  -- Trazabilidad mínima de autoría (NOM-004 exige poder identificar
+  -- quién elaboró cada parte): quién capturó el interrogatorio/
+  -- antecedentes (enfermería o el propio doctor) vs. quién capturó el
+  -- juicio clínico (siempre un doctor, ver trigger más abajo).
+  intake_by uuid references users(id),
+  intake_at timestamptz,
+  clinical_by uuid references users(id),
+  clinical_at timestamptz,
+
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- ------------------------------------------------------------
+-- Tabla: clinical_audit_log — trazabilidad de cambios clínicos (NOM-024,
+-- ver NEGOCIO.md sección 13). Antes de cada UPDATE en `consultations` o
+-- `medical_histories`, un trigger copia la fila COMO ESTABA aquí (ver
+-- log_clinical_audit() más abajo) — así ninguna nota clínica se puede
+-- sobreescribir sin dejar rastro de qué decía antes. Archivo histórico,
+-- no de uso diario: solo admin puede consultarlo, y nadie tiene permiso
+-- directo de insert/update/delete (solo el propio trigger).
+-- ------------------------------------------------------------
+create table clinical_audit_log (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references clinics(id) on delete cascade,
+  table_name text not null,
+  record_id uuid not null,
+  changed_by uuid references users(id),
+  changed_at timestamptz not null default now(),
+  -- Snapshot completo de la fila ANTES del cambio (to_jsonb(old)), no
+  -- solo los campos que cambiaron.
+  previous_data jsonb not null
+);
+
+create index idx_clinical_audit_log_record on clinical_audit_log(table_name, record_id);
 
 -- ------------------------------------------------------------
 -- Tabla: pharmacy_items (catálogo de medicamentos de farmacia interna,
@@ -252,6 +373,8 @@ alter table doctors enable row level security;
 alter table patients enable row level security;
 alter table appointments enable row level security;
 alter table consultations enable row level security;
+alter table medical_histories enable row level security;
+alter table clinical_audit_log enable row level security;
 alter table prescription_items enable row level security;
 alter table pharmacy_items enable row level security;
 alter table pharmacy_movements enable row level security;
@@ -294,6 +417,22 @@ stable
 as $$
   select coalesce(
     (select is_pharmacy from users where id = auth.uid() and active = true),
+    false
+  )
+$$;
+
+-- Función helper: ¿el usuario autenticado tiene rol de enfermería?
+-- Calco de auth_is_pharmacy() — puede capturar el interrogatorio/
+-- antecedentes de la historia clínica, no el juicio clínico (ver
+-- trigger medical_histories_restrict_clinical_fields más abajo).
+create or replace function auth_is_nurse()
+returns boolean
+language sql
+security definer
+stable
+as $$
+  select coalesce(
+    (select role = 'nurse' from users where id = auth.uid() and active = true),
     false
   )
 $$;
@@ -405,6 +544,125 @@ create policy "consultations update" on consultations
     )
   );
 
+-- medical_histories: cualquier doctor de la clínica (o admin, o
+-- enfermería) puede VER y EDITAR la historia clínica de cualquier
+-- paciente — a propósito distinto de `consultations` (que restringe a
+-- "solo el doctor dueño de la cita"): el propósito de NOM-004 es
+-- continuidad de atención entre doctores de la misma clínica.
+-- Enfermería puede capturar el interrogatorio/antecedentes en el lobby
+-- antes de la consulta, pero el trigger de abajo le bloquea el juicio
+-- clínico (exploración/diagnóstico/tratamiento) sin importar esto.
+-- Recepción no tiene acceso en absoluto a este contenido clínico (sí
+-- puede seguir editando la ficha de identificación en `patients`, que
+-- usa la política genérica de esa tabla). Sin política de delete a
+-- propósito: un expediente clínico no debe poder borrarse
+-- (conservación, NOM-024) — sin policy, RLS lo bloquea por default.
+create policy "medical_histories select" on medical_histories
+  for select using (
+    clinic_id = auth_clinic_id()
+    and (auth_is_admin() or auth_doctor_id() is not null or auth_is_nurse())
+  );
+create policy "medical_histories insert" on medical_histories
+  for insert with check (
+    clinic_id = auth_clinic_id()
+    and (auth_is_admin() or auth_doctor_id() is not null or auth_is_nurse())
+  );
+create policy "medical_histories update" on medical_histories
+  for update using (
+    clinic_id = auth_clinic_id()
+    and (auth_is_admin() or auth_doctor_id() is not null or auth_is_nurse())
+  );
+
+-- Candado duro: aunque la política de arriba deje pasar el UPDATE/INSERT
+-- a nivel de fila para enfermería, nadie que no sea doctor o admin puede
+-- tocar las columnas de juicio clínico — ni siquiera llamando a la API
+-- directo, saltándose la interfaz. Más estricto a propósito que el
+-- resto del proyecto (que en casos similares, ver consultations.notes,
+-- confía en que la app no mande ese campo): aquí el límite es "quién
+-- puede diagnosticar", una restricción legal más fuerte que una nota
+-- clínica cualquiera.
+create or replace function medical_histories_restrict_clinical_fields()
+returns trigger
+language plpgsql
+as $$
+declare
+  touched_clinical boolean;
+begin
+  if auth_is_admin() or auth_doctor_id() is not null then
+    return new;
+  end if;
+
+  if tg_op = 'INSERT' then
+    touched_clinical := (
+      new.physical_exam is not null or
+      new.diagnosis is not null or
+      new.prognosis is not null or
+      new.treatment_plan is not null or
+      new.oral_exam is not null or
+      new.dental_diagnosis is not null or
+      new.dental_treatment_plan is not null or
+      new.odontogram is not null or
+      new.clinical_by is not null or
+      new.clinical_at is not null
+    );
+  else
+    touched_clinical := (
+      new.physical_exam is distinct from old.physical_exam or
+      new.diagnosis is distinct from old.diagnosis or
+      new.prognosis is distinct from old.prognosis or
+      new.treatment_plan is distinct from old.treatment_plan or
+      new.oral_exam is distinct from old.oral_exam or
+      new.dental_diagnosis is distinct from old.dental_diagnosis or
+      new.dental_treatment_plan is distinct from old.dental_treatment_plan or
+      new.odontogram is distinct from old.odontogram or
+      new.clinical_by is distinct from old.clinical_by or
+      new.clinical_at is distinct from old.clinical_at
+    );
+  end if;
+
+  if touched_clinical then
+    raise exception
+      'Solo un doctor puede capturar exploración física, diagnóstico, pronóstico, plan de tratamiento u odontograma.';
+  end if;
+
+  return new;
+end;
+$$;
+
+create trigger medical_histories_restrict_clinical_fields
+  before insert or update on medical_histories
+  for each row execute function medical_histories_restrict_clinical_fields();
+
+-- clinical_audit_log: archivo histórico, no de uso diario — solo admin
+-- puede consultarlo. Sin política de insert/update/delete: solo el
+-- trigger de abajo escribe aquí (mismo espíritu que el kardex inmutable
+-- de pharmacy_movements).
+create policy "clinical_audit_log select" on clinical_audit_log
+  for select using (clinic_id = auth_clinic_id() and auth_is_admin());
+
+-- security definer: el trigger debe poder insertar el registro de
+-- auditoría sin importar los permisos de escritura de quien esté
+-- guardando (enfermería, doctor, admin).
+create or replace function log_clinical_audit()
+returns trigger
+language plpgsql
+security definer
+as $$
+begin
+  insert into clinical_audit_log (clinic_id, table_name, record_id, changed_by, previous_data)
+  values (old.clinic_id, tg_table_name, old.id, auth.uid(), to_jsonb(old));
+  return new;
+end;
+$$;
+
+create trigger consultations_audit
+  before update on consultations
+  for each row execute function log_clinical_audit();
+
+create trigger medical_histories_audit
+  before update on medical_histories
+  for each row execute function log_clinical_audit();
+
 -- prescription_items: cualquiera con acceso a la cita puede VER la
 -- receta (recepción puede necesitar consultarla), pero solo el doctor
 -- dueño de la cita (o admin) puede escribirla — prescribir es una
@@ -501,6 +759,14 @@ create policy "doctor manage own logo" on storage.objects
 drop policy if exists "public read doctor logos" on storage.objects;
 create policy "public read doctor logos" on storage.objects
   for select using (bucket_id = 'doctor-logos');
+
+-- ============================================================
+-- Realtime: la agenda se suscribe a cambios de `appointments` (websocket)
+-- para enterarse de citas creadas/editadas desde otra sesión sin tener
+-- que preguntar por polling. Respeta las mismas políticas RLS de la
+-- tabla.
+-- ============================================================
+alter publication supabase_realtime add table appointments;
 
 -- ============================================================
 -- Nota: cuando crees el primer usuario admin de una clínica,
