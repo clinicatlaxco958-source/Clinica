@@ -4,6 +4,10 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { createStaffUser } from "./actions";
 import { SPECIALTIES } from "@/lib/specialties";
 
+// Oculto a propósito junto con el resto del módulo de Farmacia (ver
+// components/DashboardNav.tsx) — el Doctor todavía no lo ha visto.
+const PHARMACY_VISIBLE = false;
+
 export default function CreateUserForm() {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -190,19 +194,21 @@ export default function CreateUserForm() {
                         Dar permiso de administrador
                       </label>
                     </div>
-                    <div className="col-span-2 flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        id="is_pharmacy"
-                        name="is_pharmacy"
-                      />
-                      <label
-                        htmlFor="is_pharmacy"
-                        className="text-sm text-slate-700"
-                      >
-                        Dar acceso a farmacia
-                      </label>
-                    </div>
+                    {PHARMACY_VISIBLE && (
+                      <div className="col-span-2 flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="is_pharmacy"
+                          name="is_pharmacy"
+                        />
+                        <label
+                          htmlFor="is_pharmacy"
+                          className="text-sm text-slate-700"
+                        >
+                          Dar acceso a farmacia
+                        </label>
+                      </div>
+                    )}
                   </div>
 
                   {error && (

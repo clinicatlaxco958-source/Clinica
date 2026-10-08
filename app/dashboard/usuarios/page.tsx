@@ -11,6 +11,10 @@ const roleLabels: Record<string, string> = {
   nurse: "Enfermería",
 };
 
+// Oculto a propósito junto con el resto del módulo de Farmacia (ver
+// components/DashboardNav.tsx) — el Doctor todavía no lo ha visto.
+const PHARMACY_VISIBLE = false;
+
 export default async function UsuariosPage() {
   const supabase = createClient();
   const {
@@ -65,7 +69,7 @@ export default async function UsuariosPage() {
               <th className="px-4 py-3">Teléfono</th>
               <th className="px-4 py-3">Función</th>
               <th className="px-4 py-3">Admin</th>
-              <th className="px-4 py-3">Farmacia</th>
+              {PHARMACY_VISIBLE && <th className="px-4 py-3">Farmacia</th>}
               <th className="px-4 py-3">Estado</th>
               <th className="px-4 py-3">Acciones</th>
             </tr>
@@ -92,9 +96,11 @@ export default async function UsuariosPage() {
                   <td className="px-4 py-3 text-slate-500">
                     {u.is_admin ? "Sí" : "—"}
                   </td>
-                  <td className="px-4 py-3 text-slate-500">
-                    {u.is_pharmacy ? "Sí" : "—"}
-                  </td>
+                  {PHARMACY_VISIBLE && (
+                    <td className="px-4 py-3 text-slate-500">
+                      {u.is_pharmacy ? "Sí" : "—"}
+                    </td>
+                  )}
                   <td className="px-4 py-3">
                     <span
                       className={`rounded-full px-2 py-1 text-xs font-medium ${

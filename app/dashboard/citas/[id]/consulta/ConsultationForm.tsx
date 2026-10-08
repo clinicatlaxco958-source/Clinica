@@ -84,6 +84,10 @@ export default function ConsultationForm({
   const router = useRouter();
   const supabase = createClient();
 
+  // Oculto a propósito junto con el resto del módulo de Farmacia (ver
+  // components/DashboardNav.tsx) — el Doctor todavía no lo ha visto.
+  const PHARMACY_VISIBLE = false;
+
   const [weight, setWeight] = useState(
     initialWeightKg != null ? String(initialWeightKg) : ""
   );
@@ -556,7 +560,7 @@ export default function ConsultationForm({
                       />
                     </div>
 
-                    {pharmacyItems.length > 0 && (
+                    {PHARMACY_VISIBLE && pharmacyItems.length > 0 && (
                       <div className="mt-2">
                         <select
                           value={m.pharmacyItemId ?? ""}
