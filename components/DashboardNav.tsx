@@ -12,10 +12,16 @@ export default function DashboardNav({
 }) {
   const pathname = usePathname();
 
+  // Oculto a propósito mientras se termina de pulir — el Doctor todavía
+  // no lo ha visto. La ruta y el permiso (`canAccessPharmacy`) siguen
+  // funcionando igual, solo no aparece en la navegación. Para volver a
+  // mostrarlo, quita esta constante (y el `&& PHARMACY_VISIBLE` de abajo).
+  const PHARMACY_VISIBLE = false;
+
   const links = [
     { href: "/dashboard/citas", label: "Inicio" },
     { href: "/dashboard/pacientes", label: "Pacientes" },
-    ...(canAccessPharmacy
+    ...(canAccessPharmacy && PHARMACY_VISIBLE
       ? [{ href: "/dashboard/farmacia", label: "Farmacia" }]
       : []),
     ...(isAdmin ? [{ href: "/dashboard/usuarios", label: "Usuarios" }] : []),
